@@ -1,0 +1,21 @@
+{
+  "name": "mindswipe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Learn while you scroll - a flashcard feed that feels like a short-video app",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "postinstall": "npm -w backend run seed",
+    "seed": "npm -w backend run seed",
+    "dev": "concurrently -n api,web -c blue,magenta \"npm -w backend run dev\" \"npm -w frontend run dev\"",
+    "dev:api": "npm -w backend run dev",
+    "dev:web": "npm -w frontend run dev",
+    "build": "npm -w frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
