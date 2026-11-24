@@ -52,26 +52,33 @@ app.get("/api/feed", (req, res) => {
 });
 
 /**
- * Offline bundle: a single JSON blob of up to `limit` posts WITH their comments
- * embedded, so a client can stash a whole study session in IndexedDB and run
- * with no network. Pure text, so a few hundred cards is a small download.
+ * Offline bundle: a keyset-paginated page of posts WITH their comments embedded,
+ * so a client can append a chunk to its local store and run with no network.
+ * Pure text, so each batch is a small download. Repeat calls pass the previous
+ * `nextCursor` to pull the following batch; `hasMore` reports when to stop.
  */
 app.get("/api/bundle", (req, res) => {
-  const limit = Math.min(Number.parseInt(req.query.limit, 10) || 300, 1000);
+  const cursor = Number.parseInt(req.query.cursor, 10) || 0;
+  const limit = Math.min(Number.parseInt(req.query.limit, 10) || 100, 500);
   const { topic } = req.query;
 
-  const where = [];
-  const params = [];
+  const where = ["id > ?"];
+  const params = [cursor];
   if (topic) {
     where.push("topic = ?");
     params.push(topic);
   }
-  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const rows = db.prepare(`SELECT * FROM post ${clause} ORDER BY id ASC LIMIT ?`).all(...params, limit);
+
+  const rows = db
+    .prepare(`SELECT * FROM post WHERE ${where.join(" AND ")} ORDER BY id ASC LIMIT ?`)
+    .all(...params, limit + 1);
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
 
   const commentsByPost = {};
-  if (rows.length) {
-    const ids = rows.map((r) => r.id);
+  if (page.length) {
+    const ids = page.map((r) => r.id);
     const placeholders = ids.map(() => "?").join(",");
     const crows = db
       .prepare(`SELECT * FROM comment WHERE post_id IN (${placeholders}) ORDER BY id ASC`)
@@ -81,8 +88,19 @@ app.get("/api/bundle", (req, res) => {
     }
   }
 
-  const posts = rows.map((r) => ({ ...serializePost(r), comments: commentsByPost[r.id] ?? [] }));
-  res.json({ generatedAt: new Date().toISOString(), topic: topic ?? null, count: posts.length, posts });
+  const posts = page.map((r) => ({ ...serializePost(r), comments: commentsByPost[r.id] ?? [] }));
+  // Keep the cursor advancing even on the last (possibly empty) page.
+  const nextCursor = page.length ? page[page.length - 1].id : cursor;
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    topic: topic ?? null,
+    cursor,
+    nextCursor,
+    hasMore,
+    count: posts.length,
+    posts,
+  });
 });
 
 app.get("/api/posts/:id", (req, res) => {

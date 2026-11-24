@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { OfflineInfo, Post } from "./types";
-import { downloadBundle, getTopics } from "./api";
+import { prepareOffline, getTopics } from "./api";
 import { getOfflineInfo } from "./offline";
 import {
   KEYS,
@@ -70,10 +70,10 @@ export default function App() {
     });
   }
 
-  async function onDownload() {
+  async function onPrepare() {
     setDownloading(true);
     try {
-      await downloadBundle(topic);
+      await prepareOffline(100);
       setOfflineInfo(await getOfflineInfo());
     } catch {
       // Network failed - leave existing offline data intact.
@@ -102,8 +102,8 @@ export default function App() {
             ))}
           </select>
 
-          <button className="offline-btn" onClick={onDownload} disabled={downloading}>
-            {downloading ? "Saving…" : offlineInfo ? "Update offline" : "Save offline"}
+          <button className="offline-btn" onClick={onPrepare} disabled={downloading}>
+            {downloading ? "Preparing…" : "Prepare offline"}
           </button>
         </div>
       </header>
@@ -112,7 +112,8 @@ export default function App() {
         <div className={`offline-strip ${online ? "" : "is-offline"}`}>
           {online
             ? offlineInfo
-              ? `${offlineInfo.count} cards saved for offline`
+              ? `${offlineInfo.count} cards saved for offline` +
+                (offlineInfo.hasMore ? " — tap Prepare offline for more" : " — all caught up")
               : null
             : `Offline — showing ${offlineInfo?.count ?? 0} saved cards`}
         </div>

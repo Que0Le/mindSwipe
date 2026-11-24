@@ -1,6 +1,30 @@
 import { db, migrate } from "./db.js";
+import { BACKEND_QUESTIONS } from "./data/backend-interview.js";
 
 migrate();
+
+// Expand the compact [prompt, topic, difficulty, choices, correct, explanation,
+// tags?, body?] rows from the question bank into full post objects.
+const LETTERS = ["a", "b", "c", "d", "e", "f"];
+function fromCompact(row, i) {
+  const [prompt, topic, difficulty, choices, correct, explanation, tags = [], body = ""] = row;
+  const correctIdx = Array.isArray(correct) ? correct : [correct];
+  return {
+    kind: body ? "card" : "text",
+    topic,
+    difficulty,
+    question_type: "mcq",
+    prompt,
+    body_html: body,
+    choices: choices.map((text, j) => ({ id: LETTERS[j], text })),
+    answer: { correct: correctIdx.map((k) => LETTERS[k]), explanation },
+    detail_html: "",
+    tags,
+    // Vary the baseline like-count deterministically so the feed looks alive.
+    like_count: 150 + ((i * 97) % 1800),
+    comments: [],
+  };
+}
 
 /**
  * Seed data. Content here is authored/trusted (made by us + agents). `body_html`
@@ -592,9 +616,11 @@ const insertComment = db.prepare(`
   VALUES (@post_id, @poster_id, @kind, @content)
 `);
 
+const ALL_POSTS = [...POSTS, ...BACKEND_QUESTIONS.map(fromCompact)];
+
 const seed = db.transaction(() => {
   db.exec("DELETE FROM comment; DELETE FROM post;");
-  for (const p of POSTS) {
+  for (const p of ALL_POSTS) {
     const info = insertPost.run({
       kind: p.kind,
       topic: p.topic,

@@ -44,15 +44,19 @@ export async function getTopics(): Promise<{ topic: string; count: number }[]> {
   }
 }
 
-/** Download a study session and persist it to IndexedDB for offline use. */
-export async function downloadBundle(topic?: string | null): Promise<number> {
-  const qs = new URLSearchParams({ limit: "300" });
-  if (topic) qs.set("topic", topic);
+/**
+ * Prepare offline: fetch the next BATCH of posts (keyset-paginated from the last
+ * saved cursor) and APPEND them to the local offline DB. Repeat calls keep
+ * pulling the following batch until the server reports no more.
+ */
+export async function prepareOffline(batch = 100): Promise<offline.SaveResult> {
+  const info = await offline.getOfflineInfo();
+  const cursor = info?.cursor ?? 0;
+  const qs = new URLSearchParams({ cursor: String(cursor), limit: String(batch) });
   const r = await fetch(`${BASE}/bundle?${qs.toString()}`);
   if (!r.ok) throw new Error(`bundle ${r.status}`);
   const bundle = (await r.json()) as Parameters<typeof offline.saveBundle>[0];
-  await offline.saveBundle(bundle);
-  return bundle.posts.length;
+  return offline.saveBundle(bundle);
 }
 
 export type { Post };

@@ -42,27 +42,56 @@ function txDone(tx: IDBTransaction): Promise<void> {
 
 interface Bundle {
   generatedAt: string;
-  count: number;
   topic: string | null;
+  cursor: number;
+  nextCursor: number;
+  hasMore: boolean;
+  count: number;
   posts: (Post & { comments?: Comment[] })[];
 }
 
-export async function saveBundle(bundle: Bundle): Promise<void> {
+export interface SaveResult {
+  added: number;
+  count: number;
+  cursor: number;
+  hasMore: boolean;
+}
+
+async function countPosts(): Promise<number> {
   const db = await openDb();
-  const tx = db.transaction(["posts", "comments", "meta"], "readwrite");
+  const tx = db.transaction("posts", "readonly");
+  return toPromise(tx.objectStore("posts").count());
+}
+
+/**
+ * Append a bundle batch to the local store (does not clear existing posts) and
+ * advance the saved cursor so the next call continues where this one stopped.
+ */
+export async function saveBundle(bundle: Bundle): Promise<SaveResult> {
+  const db = await openDb();
+  const tx = db.transaction(["posts", "comments"], "readwrite");
   const posts = tx.objectStore("posts");
   const comments = tx.objectStore("comments");
-  const meta = tx.objectStore("meta");
   for (const p of bundle.posts) {
     const { comments: cs, ...rest } = p;
     posts.put(rest);
     comments.put({ postId: p.id, items: cs ?? [] });
   }
-  meta.put(
-    { generatedAt: bundle.generatedAt, count: bundle.posts.length, topic: bundle.topic },
-    "bundle"
-  );
   await txDone(tx);
+
+  const count = await countPosts();
+  const info: OfflineInfo = {
+    generatedAt: bundle.generatedAt,
+    count,
+    topic: bundle.topic,
+    cursor: bundle.nextCursor,
+    hasMore: bundle.hasMore,
+  };
+  const mtx = db.transaction("meta", "readwrite");
+  mtx.objectStore("meta").put(info, "bundle");
+  await txDone(mtx);
+
+  return { added: bundle.posts.length, count, cursor: bundle.nextCursor, hasMore: bundle.hasMore };
 }
 
 async function allPosts(): Promise<Post[]> {

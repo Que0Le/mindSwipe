@@ -98,7 +98,7 @@ Base path `/api`. JSON in, JSON out.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/feed?cursor=&limit=&topic=&difficulty=` | A feed batch (keyset pagination) |
-| GET | `/bundle?topic=&limit=` | One blob: posts **with** comments, for offline |
+| GET | `/bundle?cursor=&limit=&topic=` | Keyset-paginated batch of posts **with** comments, for offline (append the next 100) |
 | GET | `/posts/:id` | A single post |
 | GET | `/posts/:id/comments` | A post's notes / comments |
 | GET | `/topics` | Topics with counts |

@@ -44,4 +44,8 @@ export interface OfflineInfo {
   generatedAt: string;
   count: number;
   topic: string | null;
+  // Keyset position: the highest post id saved so far. The next "Prepare
+  // offline" click fetches the batch after this.
+  cursor: number;
+  hasMore: boolean;
 }

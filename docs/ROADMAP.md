@@ -42,7 +42,15 @@ See [PROJECT.md](PROJECT.md) for what each phase is and why.
       component tests (MCQ grading, windowing)
 - [ ] Real app icons (replace the inline SVG placeholder)
 - [ ] Deploy target: static frontend (CDN) + small API host; document it
-- [ ] Grow content volume (toward a few hundred cards) to test feel at scale
+- [x] Grow content volume: 200 backend-interview cards (Spring Boot / PostgreSQL
+      / system design / Java) added for offline testing
+- [ ] **Cap the offline DB size.** Keep the last N posts in memory (full content)
+      *or* under M MB — whichever limit is hit first — so scroll-back-up still
+      works. Beyond that, keep only the post id (max ~1000 ids), dropping the
+      body/comments to reclaim space. Run cleanup lazily — occasionally, or when
+      the user next taps "Prepare offline" — not on every scroll. Needs: a size
+      estimate per stored post, an eviction pass over IndexedDB, and re-fetch of
+      an evicted post (by id) if the user scrolls back to it online.
 
 ---
 
