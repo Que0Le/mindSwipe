@@ -151,6 +151,24 @@ Phase 3 may warrant revisiting it.
   production builds (network-first for navigations). It deliberately does **not**
   cache `/api` responses — the explicit offline store owns that data.
 
+#### Size cap
+
+The offline store is bounded so it can't grow without limit (the audience is
+phones). `enforceOfflineCap()` in [offline.ts](../frontend/src/offline.ts) keeps
+the **newest** full cards up to a count *or* a byte budget — whichever is hit
+first — and trims the rest to **id-only stubs**:
+
+- `OFFLINE_CAP`: `maxFullPosts` (150), `maxFullBytes` (5 MB), `maxTrackedIds`
+  (1000 full + stub records; oldest ids dropped beyond that).
+- A stub is just `{ id, stub: true }`. The offline feed skips stubs, so a
+  trimmed card never renders empty; when the user scrolls back to it **online**,
+  the network-first api layer serves the full card again (re-fetch by id — no
+  special path needed).
+- Cleanup is **lazy**: it runs only after a "Prepare offline" batch is saved,
+  never on scroll. Re-preparing a batch overwrites a stub with the full card.
+- Size is estimated by serialized length (ASCII ≈ 1 byte/char) — cheap, no
+  stored metadata.
+
 ### Per-viewer state
 
 [localState.ts](../frontend/src/localState.ts): likes, bookmarks, and answered

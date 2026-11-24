@@ -33,7 +33,7 @@ export default function Feed({
   onOpen,
 }: Props) {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [cursor, setCursor] = useState<number>(0);
+  const [, setCursor] = useState<number>(0);
   const [hasMore, setHasMore] = useState(true);
   const [active, setActive] = useState(0);
   const [loading, setLoading] = useState(false);

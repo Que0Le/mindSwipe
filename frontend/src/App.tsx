@@ -113,6 +113,7 @@ export default function App() {
           {online
             ? offlineInfo
               ? `${offlineInfo.count} cards saved for offline` +
+                (offlineInfo.stubCount ? ` · ${offlineInfo.stubCount} trimmed to save space` : "") +
                 (offlineInfo.hasMore ? " — tap Prepare offline for more" : " — all caught up")
               : null
             : `Offline — showing ${offlineInfo?.count ?? 0} saved cards`}

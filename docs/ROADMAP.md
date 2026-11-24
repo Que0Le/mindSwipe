@@ -44,13 +44,15 @@ See [PROJECT.md](PROJECT.md) for what each phase is and why.
 - [ ] Deploy target: static frontend (CDN) + small API host; document it
 - [x] Grow content volume: 200 backend-interview cards (Spring Boot / PostgreSQL
       / system design / Java) added for offline testing
-- [ ] **Cap the offline DB size.** Keep the last N posts in memory (full content)
-      *or* under M MB — whichever limit is hit first — so scroll-back-up still
-      works. Beyond that, keep only the post id (max ~1000 ids), dropping the
-      body/comments to reclaim space. Run cleanup lazily — occasionally, or when
-      the user next taps "Prepare offline" — not on every scroll. Needs: a size
-      estimate per stored post, an eviction pass over IndexedDB, and re-fetch of
-      an evicted post (by id) if the user scrolls back to it online.
+- [x] **Cap the offline DB size.** Keep the newest full cards up to
+      `maxFullPosts` (150) *or* `maxFullBytes` (5 MB) — whichever is hit first —
+      so scroll-back-up still works. Older cards are trimmed to id-only stubs
+      (max `maxTrackedIds` = 1000 records total; oldest ids dropped beyond that).
+      Cleanup runs lazily in `enforceOfflineCap()`, called only when a
+      "Prepare offline" batch is saved — never on scroll. The offline feed skips
+      stubs; the network-first api layer re-fetches a trimmed post by id when the
+      user scrolls back to it online. Limits are tunable via `OFFLINE_CAP` in
+      [offline.ts](../frontend/src/offline.ts).
 
 ---
 
