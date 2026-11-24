@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { OfflineInfo, Post } from "./types";
 import { prepareOffline, getTopics } from "./api";
 import { getOfflineInfo } from "./offline";
@@ -27,9 +27,42 @@ export default function App() {
   const [downloading, setDownloading] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
 
+  // Post id from the URL on first load (e.g. /?id=123), for deep links / refresh.
+  const initialId = useRef<number | null>(
+    (() => {
+      const raw = new URLSearchParams(window.location.search).get("id");
+      const n = raw ? Number.parseInt(raw, 10) : NaN;
+      return Number.isInteger(n) && n > 0 ? n : null;
+    })()
+  ).current;
+
   useEffect(() => {
     getTopics().then(setTopics);
     getOfflineInfo().then(setOfflineInfo);
+  }, []);
+
+  // Mirror the active feed card in the URL, silently (no history entry).
+  const onActiveChange = useCallback((id: number | null) => {
+    const url = id ? `${window.location.pathname}?id=${id}` : window.location.pathname;
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+
+  // Opening a post pushes a history entry so Back (or the swipe-right gesture)
+  // closes the detail view instead of leaving the app.
+  const openDetail = useCallback((post: Post) => {
+    window.history.pushState({ detail: post.id }, "", `${window.location.pathname}?id=${post.id}`);
+    setOpenPost(post);
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    if (window.history.state?.detail) window.history.back();
+    else setOpenPost(null);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => setOpenPost(null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   useEffect(() => {
@@ -128,10 +161,12 @@ export default function App() {
         onToggleLike={toggleLike}
         onToggleSave={toggleSave}
         onAnswer={recordAnswer}
-        onOpen={setOpenPost}
+        onOpen={openDetail}
+        initialId={initialId}
+        onActiveChange={onActiveChange}
       />
 
-      {openPost && <Detail post={openPost} onClose={() => setOpenPost(null)} />}
+      {openPost && <Detail post={openPost} onClose={closeDetail} />}
     </div>
   );
 }

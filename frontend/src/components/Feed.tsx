@@ -12,6 +12,11 @@ interface Props {
   onToggleSave: (id: number) => void;
   onAnswer: (id: number, choiceId: string) => void;
   onOpen: (post: Post) => void;
+  // Deep-link: start the feed at this post id (first mount only). Forward-only,
+  // so there's nothing above it to scroll up to — scrolling down continues.
+  initialId?: number | null;
+  // Fires when the snapped card changes, with its id (null when empty).
+  onActiveChange?: (id: number | null) => void;
 }
 
 const BATCH = 8;
@@ -31,6 +36,8 @@ export default function Feed({
   onToggleSave,
   onAnswer,
   onOpen,
+  initialId,
+  onActiveChange,
 }: Props) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [, setCursor] = useState<number>(0);
@@ -42,6 +49,7 @@ export default function Feed({
   const loadingRef = useRef(false);
   const cursorRef = useRef(0);
   const hasMoreRef = useRef(true);
+  const firstLoadRef = useRef(true);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current || !hasMoreRef.current) return;
@@ -65,18 +73,30 @@ export default function Feed({
     }
   }, [topic]);
 
-  // Reset and reload when the topic filter changes.
+  // Reset and reload when the topic filter changes. On the very first load,
+  // honour a deep-linked id by starting the cursor just before it; any later
+  // topic change starts from the top.
   useEffect(() => {
+    const start = firstLoadRef.current && initialId && initialId > 0 ? initialId - 1 : 0;
+    firstLoadRef.current = false;
     setPosts([]);
     setActive(0);
-    cursorRef.current = 0;
-    setCursor(0);
+    cursorRef.current = start;
+    setCursor(start);
     hasMoreRef.current = true;
     setHasMore(true);
     scrollerRef.current?.scrollTo({ top: 0 });
     loadMore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic]);
+
+  // Keep the URL in sync with the snapped card (App uses replaceState so this
+  // never floods history). Skip while empty so a deep-linked id isn't wiped
+  // before the first batch arrives.
+  useEffect(() => {
+    if (posts.length === 0) return;
+    onActiveChange?.(posts[active]?.id ?? null);
+  }, [active, posts, onActiveChange]);
 
   // Track the active (snapped) card from scroll position, rAF-throttled, and
   // prefetch the next batch as we near the end.
