@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { OfflineInfo, Post } from "./types";
-import { prepareOffline, getTopics } from "./api";
-import { getOfflineInfo } from "./offline";
+import type { Post } from "./types";
+import { getTopics, getUserState, recordAttempt, recordView, setReaction } from "./api";
+import { ensureAuth } from "./supabase";
 import {
   KEYS,
   loadAnswers,
@@ -19,13 +19,13 @@ export default function App() {
   const [topics, setTopics] = useState<{ topic: string; count: number }[]>([]);
   const [openPost, setOpenPost] = useState<Post | null>(null);
 
+  // localStorage gives instant, offline-safe UI; Supabase is the durable store.
   const [likes, setLikes] = useState<BoolMap>(() => loadLikes());
   const [saves, setSaves] = useState<BoolMap>(() => loadSaves());
   const [answers, setAnswers] = useState<AnswerMap>(() => loadAnswers());
 
-  const [offlineInfo, setOfflineInfo] = useState<OfflineInfo | null>(null);
-  const [downloading, setDownloading] = useState(false);
-  const [online, setOnline] = useState(navigator.onLine);
+  // Record each card view at most once per session.
+  const viewed = useRef<Set<number>>(new Set());
 
   // Post id from the URL on first load (e.g. /?id=123), for deep links / refresh.
   const initialId = useRef<number | null>(
@@ -36,19 +36,39 @@ export default function App() {
     })()
   ).current;
 
+  // Topics for the filter.
   useEffect(() => {
     getTopics().then(setTopics);
-    getOfflineInfo().then(setOfflineInfo);
   }, []);
 
-  // Mirror the active feed card in the URL, silently (no history entry).
+  // Sign in anonymously, then hydrate likes/answers from the DB (server wins).
+  useEffect(() => {
+    let alive = true;
+    ensureAuth()
+      .then(() => getUserState())
+      .then(({ likes: sl, answers: sa }) => {
+        if (!alive) return;
+        setLikes((prev) => ({ ...prev, ...sl }));
+        setAnswers((prev) => ({ ...prev, ...sa }));
+      })
+      .catch(() => {
+        /* offline / box down — keep local state */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Mirror the active feed card in the URL (silent) and record the view.
   const onActiveChange = useCallback((id: number | null) => {
     const url = id ? `${window.location.pathname}?id=${id}` : window.location.pathname;
     window.history.replaceState(window.history.state, "", url);
+    if (id && !viewed.current.has(id)) {
+      viewed.current.add(id);
+      void recordView(id);
+    }
   }, []);
 
-  // Opening a post pushes a history entry so Back (or the swipe-right gesture)
-  // closes the detail view instead of leaving the app.
   const openDetail = useCallback((post: Post) => {
     window.history.pushState({ detail: post.id }, "", `${window.location.pathname}?id=${post.id}`);
     setOpenPost(post);
@@ -65,26 +85,21 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
-    return () => {
-      window.removeEventListener("online", on);
-      window.removeEventListener("offline", off);
-    };
-  }, []);
-
+  // The network writes live OUTSIDE the state updaters: updaters must be pure
+  // (React 18 StrictMode double-invokes them, which would double-fire writes).
   function toggleLike(id: number) {
+    const nextLiked = !likes[id];
     setLikes((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      if (!next[id]) delete next[id];
+      const next = { ...prev };
+      if (nextLiked) next[id] = true;
+      else delete next[id];
       save(KEYS.likes, next);
       return next;
     });
+    void setReaction(id, "like", nextLiked);
   }
 
+  // Saves/bookmarks stay local in build-1 (no server table yet).
   function toggleSave(id: number) {
     setSaves((prev) => {
       const next = { ...prev, [id]: !prev[id] };
@@ -95,24 +110,14 @@ export default function App() {
   }
 
   function recordAnswer(id: number, choiceId: string) {
+    if (answers[id]) return; // already answered (Card also disables after the first pick)
     setAnswers((prev) => {
-      if (prev[id]) return prev; // lock first answer
+      if (prev[id]) return prev;
       const next = { ...prev, [id]: choiceId };
       save(KEYS.answers, next);
       return next;
     });
-  }
-
-  async function onPrepare() {
-    setDownloading(true);
-    try {
-      await prepareOffline(100);
-      setOfflineInfo(await getOfflineInfo());
-    } catch {
-      // Network failed - leave existing offline data intact.
-    } finally {
-      setDownloading(false);
-    }
+    void recordAttempt(id, [choiceId]);
   }
 
   return (
@@ -134,24 +139,8 @@ export default function App() {
               </option>
             ))}
           </select>
-
-          <button className="offline-btn" onClick={onPrepare} disabled={downloading}>
-            {downloading ? "Preparing…" : "Prepare offline"}
-          </button>
         </div>
       </header>
-
-      {(!online || offlineInfo) && (
-        <div className={`offline-strip ${online ? "" : "is-offline"}`}>
-          {online
-            ? offlineInfo
-              ? `${offlineInfo.count} cards saved for offline` +
-                (offlineInfo.stubCount ? ` · ${offlineInfo.stubCount} trimmed to save space` : "") +
-                (offlineInfo.hasMore ? " — tap Prepare offline for more" : " — all caught up")
-              : null
-            : `Offline — showing ${offlineInfo?.count ?? 0} saved cards`}
-        </div>
-      )}
 
       <Feed
         topic={topic}
