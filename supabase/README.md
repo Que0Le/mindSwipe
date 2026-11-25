@@ -7,11 +7,36 @@ The Spring app in [../backend/](../backend/) is **parked** — it becomes the
 trusted tier later (grading of graded cards, moderation, dashboards, rollups),
 not part of build-1.
 
-## Where it runs
+## Running instance (build-1)
 
-Full Supabase stack via Docker on the shared Ubuntu box (`ssh dev1-u26`,
-192.168.178.38). The box is being resized to ≥4 GB first — the full stack needs
-~4 GB and the box shipped with 1.6 GB.
+The full stack is **live** on the Ubuntu box (`ssh dev1-u26`, 192.168.178.38),
+Supabase self-hosted **v0.8.5**, project dir `~/mindswipe/mindswipe-project`.
+Manage it from there with `sh run.sh {start|stop|status|logs|secrets}`.
+
+Frontend connection (client key — safe to embed in the PWA):
+
+- `SUPABASE_URL` = `http://192.168.178.38:8000`
+- `SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_rHnesNn-dlSSsTBgWd_ABe__3TvZMSL`
+
+Studio (DB UI): `http://192.168.178.38:8000` — basic auth, user `supabase`
+(password in the box `.env` `DASHBOARD_PASSWORD`). Postgres pooler:
+`192.168.178.38:5432` (session) / `6543` (transaction). The **service_role /
+secret keys stay on the box** (`.env`, or `sh run.sh secrets`) — never in the PWA.
+
+Status: anonymous sign-in enabled; `migrations/0001_init.sql` applied; 1000 cards
+seeded. Verified end-to-end — anon feed read, anonymous sign-in, and authenticated
+`attempt`/`reaction` writes scoped by RLS.
+
+## Seeding
+
+`seed/gen-seed.mjs` reads `../questions_gymnasium.json`, applies the transform
+(letter options → stable `c1…cN` ids, `correct` letter → choice id, difficulty →
+1/2/3, `meta.language` → `locale`, extra fields → `detail`) and writes SQL:
+
+```sh
+node supabase/seed/gen-seed.mjs out.sql
+ssh dev1-u26 "docker exec -i supabase-db psql -v ON_ERROR_STOP=1 -U postgres -d postgres" < out.sql
+```
 
 ## Pieces
 
