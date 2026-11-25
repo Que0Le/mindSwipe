@@ -62,15 +62,31 @@ experience: swipe, answer, open details, go offline.
 **Status: working prototype.** See [ROADMAP.md](ROADMAP.md) for what's done and
 what's left in this phase.
 
-### Phase 2 — personalise and scale the content
+### Phase 2 — multi-tenant platform (and the demo that proves it)
 
-Turn a feed into a study tool and a content operation:
+Turn the single feed into a multi-tenant platform, and demo it to three
+audiences that differ only by configuration:
 
-- Accounts; sync likes / saves / answered-state across devices.
+- **Public network** — the open, free tier on the provider's base library;
+  ad-supported, open membership, user comments and user-authored cards.
+- **Paid version** — a school on the base library, ad-free, with its learners'
+  data kept to itself (no provider-side tracking) and a teacher monitoring
+  dashboard.
+- **Private circle** — a school running a closed group whose own experts author
+  private material, with advanced features.
+
+Underneath, the same capabilities serve all three:
+
+- Accounts and per-tenant roles; sync likes / saves / answered-state across devices.
 - Progress tracking and spaced-repetition scheduling (show weak cards sooner).
-- A real authoring + multi-agent review pipeline that generates, checks, and
-  ingests content into the backend at volume.
-- Search and browse by topic / difficulty / tag; analytics on which cards work.
+- An authoring + review pipeline that generates, checks, and ingests content.
+- Search and browse by topic / difficulty / tag; dashboards on engagement and
+  which cards teach.
+
+The infrastructure is deliberately minimal — a single managed Postgres backbone
+with row-level tenant isolation — so the three audiences are a matter of config
+and feature flags, not three codebases. See [TECH.md](TECH.md) and
+[ROADMAP.md](ROADMAP.md).
 
 ### Phase 3 — the content channel / social layer
 
@@ -82,6 +98,9 @@ viewer.
 - Comment sections opened up (with moderation); following, channels,
   notifications.
 - Creator tooling so material from others can enter the platform.
+- Going international on public cloud: data residency per region (and the paid
+  tier's "data stays with us"), made cheap because the tenant model is standard,
+  portable Postgres.
 - Infrastructure to match (distributed database, caching, rate limiting).
 
 ## Success signals
@@ -89,8 +108,10 @@ viewer.
 - **Phase 1:** the feed feels as smooth as a native short-video app; a session
   can be taken fully offline; people finish more cards per sitting than a
   conventional quiz app would get.
-- **Phase 2:** returning users; measurable learning (cards answered correctly on
-  second exposure); content throughput high enough to keep feeds fresh.
+- **Phase 2:** the three audiences (public / paid / private) are visibly distinct
+  running off one codebase + config, and a school sees only its own data and
+  dashboard. Plus returning users; measurable learning (cards answered correctly
+  on second exposure); content throughput high enough to keep feeds fresh.
 - **Phase 3:** content gets distribution as posts; creators and followers show up.
 
 ## See also

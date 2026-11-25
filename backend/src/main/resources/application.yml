@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: mindswipe-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/mindswipe}
+    username: ${DB_USER:mindswipe}
+    password: ${DB_PASSWORD:mindswipe}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: ${PORT:4000}
+
+mindswipe:
+  # On startup, if the post table is empty, load the authored question bank.
+  seed:
+    enabled: ${SEED_ENABLED:true}
+    location: ${SEED_FILE:classpath:seed/questions_gymnasium.json}
+  # CORS origins allowed in dev (the Vite dev server + LAN). Comma-separated.
+  cors:
+    allowed-origins: ${CORS_ORIGINS:*}
+
+logging:
+  level:
+    org.flywaydb: info
