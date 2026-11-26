@@ -5,6 +5,8 @@ import Card from "./Card";
 
 interface Props {
   source: FeedSource;
+  // Deep link: start an open-ended feed just before this card so it loads first.
+  initialId?: number | null;
   likes: Record<number, boolean>;
   saves: Record<number, boolean>;
   answers: Record<number, string[]>;
@@ -22,6 +24,7 @@ const WINDOW_AFTER = 2;
 
 export default function Feed({
   source,
+  initialId,
   likes,
   saves,
   answers,
@@ -65,11 +68,14 @@ export default function Feed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey]);
 
-  // Reset and reload whenever the source changes.
+  // Reset and reload whenever the source changes. On an open-ended source a
+  // deep-linked initialId starts the keyset cursor just before that card so it
+  // loads first (bounded sources — playlist/assignment — ignore it).
   useEffect(() => {
+    const openEnded = source.type === "all" || source.type === "topic" || source.type === "random";
     setPosts([]);
     setActive(0);
-    cursorRef.current = 0;
+    cursorRef.current = openEnded && initialId && initialId > 0 ? initialId - 1 : 0;
     hasMoreRef.current = true;
     setHasMore(true);
     scrollerRef.current?.scrollTo({ top: 0 });
