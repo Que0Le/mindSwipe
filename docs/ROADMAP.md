@@ -169,8 +169,52 @@ flags + RLS scoping** — same codebase, same feed.
 
 - [ ] Engagement + progress dashboard **computed from own `attempt`/`activity`
       tables** — defer PostHog to scale
-- [ ] Teacher/monitor view (Paid version); provider view that **excludes**
-      provider-analytics-off tenants (honors School A's privacy requirement)
+- [~] Teacher/monitor view (Paid version). **Shipped (build-2):** a stub-free
+      `class_roster` (per-student answered/correct, RLS-scoped so a teacher reads
+      only their own students). Still a popup over one undifferentiated class.
+- [ ] Provider view that **excludes** provider-analytics-off tenants (honors
+      School A's privacy requirement)
+
+#### Teacher dashboard — the real thing (a selling point, deserves its own page)
+
+The class dashboard is a key sell, so it should be a **dedicated page/route**, not
+a popup. A real school teacher wears two hats, and the dashboard must reflect both:
+
+- **Subject teacher** (e.g. maths across several classes): views a dashboard
+  *scoped to their subject*, with depth — per-class, per-student, per-topic, down
+  to individual cards. `post.subject` is already a clean categorical (19 subjects,
+  no nulls; Mathematik = 87 cards), so subject scoping needs no new content work.
+- **Homeroom teacher / Klassenlehrer** (owns one class, e.g. 7A): views their
+  class across **all subjects**, but at **less detail** — a per-student ×
+  per-subject summary (answered / accuracy), not the card-level depth a subject
+  teacher gets. Can also **search a student across classes**.
+
+Requirements:
+- Pick a **class** (7A) → list its students; **search a student** by name
+  (homeroom/admin across classes).
+- **Per-student page**: for now a few statistics (answered/correct, per-subject,
+  per-topic, recent activity); full progress/mastery timeline comes later.
+- **Subject vs homeroom views**: subject teacher sees their subject deep; homeroom
+  sees all subjects shallow.
+
+Data model this implies (new):
+- `class(id, tenant_id, name, homeroom_teacher)` and `class_member(class_id,
+  student)` — students grouped into classes (membership stays user↔tenant).
+- `teaching(teacher, class_id, subject)` — who teaches which subject to which
+  class. Subject stays a string (matches `post.subject`); no subject table.
+- RLS evolves from the current tenant-wide `staff_sees_user` to a **class/subject
+  gate**: a subject teacher sees students in classes they teach, scoped to their
+  subject; a homeroom teacher sees their whole class across subjects. Decision
+  pending: full subject-level RLS (strict, a maths teacher literally can't read
+  biology attempts) vs. class-level RLS + subject filtering in the views
+  (simpler). Lean strict for a schools product.
+- Views: a per-student×subject rollup (homeroom breadth) and a per-topic/card
+  detail (subject depth), both security_invoker so the class/subject gate scopes
+  them.
+
+Stage it: (1) move the dashboard to its own route, (2) add class/teaching model
++ seed 7A/7B with a subject teacher and a homeroom teacher, (3) class roster +
+per-student stat page, (4) subject vs homeroom scoping, (5) student search.
 
 ### Tech details
 
