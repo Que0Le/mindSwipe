@@ -34,12 +34,32 @@ export interface FeedPage {
 
 export type Role = "student" | "teacher" | "author" | "tenant_admin";
 
+// Per-tenant feature flags — the same codebase renders different surfaces per
+// archetype (Public / Paid / Private) purely from these.
+export interface Flags {
+  ads: boolean;
+  provider_analytics: boolean;
+  authoring: boolean;
+  advanced: boolean;
+  monitoring_dashboard: boolean;
+}
+
+export const DEFAULT_FLAGS: Flags = {
+  ads: false,
+  provider_analytics: false,
+  authoring: false,
+  advanced: false,
+  monitoring_dashboard: false,
+};
+
 export interface Identity {
   userId: string;
   isAnonymous: boolean;
   tenantId: number | null;
   role: Role | null;
   displayName: string | null;
+  plan: string | null;
+  flags: Flags;
 }
 
 // --- dashboard -------------------------------------------------------------

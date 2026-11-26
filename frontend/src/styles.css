@@ -968,6 +968,9 @@ body {
 .persona-dot[data-role="teacher"] {
   background: #ffb871;
 }
+.persona-dot[data-role="author"] {
+  background: var(--good);
+}
 .persona-pop {
   position: absolute;
   right: 0;
@@ -1129,4 +1132,98 @@ body {
   background: var(--bad-soft);
   border-color: var(--bad);
   color: #ffd0d0;
+}
+
+/* ===================== build-2: feature-flag surfaces ===================== */
+
+/* Ad slot (public tier only) */
+.ad {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 4px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface),
+    var(--surface) 10px,
+    var(--surface-2) 10px,
+    var(--surface-2) 20px
+  );
+}
+.ad-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.ad strong {
+  font-size: 14px;
+}
+.ad p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Flag-gated teaching tools */
+.tools {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tool-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tool-card:hover {
+  border-color: var(--accent);
+}
+.tool-ico {
+  font-size: 18px;
+}
+.tool-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.tool-modal {
+  width: 100%;
+  max-width: 440px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+.tool-modal h2 {
+  margin: 10px 0 8px;
+  font-size: 19px;
+}
+.tool-note {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
 }

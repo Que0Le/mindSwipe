@@ -1,6 +1,10 @@
 import { supabase } from "./supabase";
 import { currentPersonaKey, rememberPersona } from "./localState";
-import type { Identity, Role } from "./types";
+import { DEFAULT_FLAGS, type Flags, type Identity, type Role } from "./types";
+
+// Anonymous visitors belong to the Public Network (tenant 1) for flag purposes,
+// so they get its config (ads on) without being a member of anything.
+const PUBLIC_TENANT_ID = 1;
 
 export { currentPersonaKey } from "./localState";
 
@@ -23,7 +27,7 @@ export const PERSONAS: Persona[] = [
   {
     key: "student",
     label: "Alex",
-    sublabel: "Student · Lincoln High",
+    sublabel: "Student · Lincoln High (Paid)",
     kind: "password",
     email: "student@demo.mindswipe",
     password: "demo1234",
@@ -31,7 +35,7 @@ export const PERSONAS: Persona[] = [
   {
     key: "student2",
     label: "Sam",
-    sublabel: "Student · Lincoln High",
+    sublabel: "Student · Lincoln High (Paid)",
     kind: "password",
     email: "student2@demo.mindswipe",
     password: "demo1234",
@@ -39,9 +43,17 @@ export const PERSONAS: Persona[] = [
   {
     key: "teacher",
     label: "Ms. Schmidt",
-    sublabel: "Teacher · Lincoln High",
+    sublabel: "Teacher · Lincoln High (Paid)",
     kind: "password",
     email: "teacher@demo.mindswipe",
+    password: "demo1234",
+  },
+  {
+    key: "author",
+    label: "Prof. Rivera",
+    sublabel: "Teacher · Riverdale (Private)",
+    kind: "password",
+    email: "author@demo.mindswipe",
     password: "demo1234",
   },
 ];
@@ -84,13 +96,27 @@ export function ensureAuth(): Promise<void> {
   return ready;
 }
 
-/** The signed-in user plus their first membership (tenant + role), if any. */
+async function loadFlags(tenantId: number): Promise<{ plan: string | null; flags: Flags }> {
+  const { data } = await supabase
+    .from("tenant_config")
+    .select("plan,flags")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  return {
+    plan: (data?.plan as string) ?? null,
+    flags: { ...DEFAULT_FLAGS, ...((data?.flags as Partial<Flags>) ?? {}) },
+  };
+}
+
+/** The signed-in user, their first membership (tenant + role), and the feature
+ *  flags of their tenant — the public tenant's flags for anonymous visitors. */
 export async function getIdentity(): Promise<Identity> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    return { userId: "", isAnonymous: true, tenantId: null, role: null, displayName: null };
+    const { plan, flags } = await loadFlags(PUBLIC_TENANT_ID);
+    return { userId: "", isAnonymous: true, tenantId: null, role: null, displayName: null, plan, flags };
   }
   const { data } = await supabase
     .from("membership")
@@ -98,11 +124,14 @@ export async function getIdentity(): Promise<Identity> {
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
+  const { plan, flags } = await loadFlags(data?.tenant_id ?? PUBLIC_TENANT_ID);
   return {
     userId: user.id,
     isAnonymous: Boolean((user as { is_anonymous?: boolean }).is_anonymous),
     tenantId: data?.tenant_id ?? null,
     role: (data?.role as Role) ?? null,
     displayName: data?.display_name ?? null,
+    plan,
+    flags,
   };
 }

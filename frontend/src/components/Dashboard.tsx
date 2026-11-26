@@ -39,6 +39,11 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ topic: string; count: number }[]>([]);
+  // A flag-gated teaching tool opened from the dashboard (stub surfaces for now).
+  const [tool, setTool] = useState<"authoring" | "monitoring" | null>(null);
+
+  const flags = identity.flags;
+  const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
 
   const masteryMap = useMemo(() => {
     const m = new Map<string, TopicMastery>();
@@ -122,6 +127,38 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
             ▶ Start {interests.length > 0 ? "from my topics" : "swiping"}
           </button>
         </section>
+
+        {/* Public tier shows ads; paid/private tenants have the flag off. */}
+        {flags.ads && (
+          <aside className="ad">
+            <span className="ad-tag">Sponsored</span>
+            <div>
+              <strong>Go ad-free with mindSwipe Pro</strong>
+              <p>Unlock distraction-free study for your whole class.</p>
+            </div>
+          </aside>
+        )}
+
+        {/* Flag-gated staff tools: which appear depends on the tenant's plan. */}
+        {isStaff && (flags.monitoring_dashboard || flags.authoring) && (
+          <section className="dash-sec">
+            <h2 className="sec-title">Teaching tools</h2>
+            <div className="tools">
+              {flags.monitoring_dashboard && (
+                <button className="tool-card" onClick={() => setTool("monitoring")}>
+                  <span className="tool-ico">📊</span>
+                  <span>Class dashboard</span>
+                </button>
+              )}
+              {flags.authoring && (
+                <button className="tool-card" onClick={() => setTool("authoring")}>
+                  <span className="tool-ico">✍️</span>
+                  <span>Author a card</span>
+                </button>
+              )}
+            </div>
+          </section>
+        )}
 
         {isMember && (
           <section className="dash-sec">
@@ -228,6 +265,33 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
           </section>
         )}
       </div>
+
+      {tool && (
+        <div className="tool-scrim" onClick={() => setTool(null)}>
+          <div className="tool-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="back" onClick={() => setTool(null)} aria-label="Close">
+              ← Close
+            </button>
+            {tool === "monitoring" ? (
+              <>
+                <h2>Class dashboard</h2>
+                <p className="tool-note">
+                  Enabled for {identity.displayName}’s school ({identity.plan} plan). Live class
+                  progress and engagement will appear here.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2>Author a card</h2>
+                <p className="tool-note">
+                  Authoring is enabled for your school ({identity.plan} plan). The card editor —
+                  draft → review → publish — will appear here.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

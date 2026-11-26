@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FeedSource, Identity, Post } from "./types";
+import { DEFAULT_FLAGS, type FeedSource, type Identity, type Post } from "./types";
 import {
   clearUserActivity,
   getPost,
@@ -83,7 +83,16 @@ export default function App() {
         setAnswers((prev) => ({ ...prev, ...sa }));
       })
       .catch(() => {
-        if (alive) setIdentity({ userId: "", isAnonymous: true, tenantId: null, role: null, displayName: null });
+        if (alive)
+          setIdentity({
+            userId: "",
+            isAnonymous: true,
+            tenantId: null,
+            role: null,
+            displayName: null,
+            plan: null,
+            flags: DEFAULT_FLAGS,
+          });
       });
     return () => {
       alive = false;
