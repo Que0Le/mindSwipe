@@ -1,5 +1,6 @@
 import type {
   Assignment,
+  CardInsight,
   ClassMember,
   Comment,
   FeedPage,
@@ -262,6 +263,61 @@ export async function getAssignments(): Promise<Assignment[]> {
     dueAt: r.due_at,
     progress: progMap.get(r.id) ?? { total: 0, attempted: 0, correct: 0 },
   }));
+}
+
+/** Per-card content analytics for a playlist: difficulty, time, distractors.
+ *  RLS scopes the aggregates to attempts the caller may read (their own context). */
+export async function getPlaylistInsights(playlistId: number): Promise<CardInsight[]> {
+  await ensureAuth();
+  const { data: items } = await supabase
+    .from("playlist_item")
+    .select(`position, post:post(id,prompt,choices)`)
+    .eq("playlist_id", playlistId)
+    .order("position", { ascending: true });
+  const cards = ((items ?? []) as unknown as {
+    position: number;
+    post: { id: number; prompt: string; choices: { id: string; text: string }[] } | null;
+  }[]).filter((r) => r.post);
+  const postIds = cards.map((r) => (r.post as { id: number }).id);
+  if (postIds.length === 0) return [];
+
+  const [diffRes, distRes] = await Promise.all([
+    supabase
+      .from("playlist_difficulty")
+      .select("post_id,attempts,students,correct_rate,median_ms")
+      .eq("playlist_id", playlistId),
+    supabase.from("card_distractors").select("post_id,choice_id,pick_rate,is_correct").in("post_id", postIds),
+  ]);
+
+  const diffMap = new Map<number, { attempts: number; students: number; correct_rate: number | null; median_ms: number | null }>();
+  for (const d of (diffRes.data ?? []) as { post_id: number; attempts: number; students: number; correct_rate: number | null; median_ms: number | null }[]) {
+    diffMap.set(d.post_id, d);
+  }
+  const distMap = new Map<number, { choice_id: string; pick_rate: number; is_correct: boolean }[]>();
+  for (const d of (distRes.data ?? []) as { post_id: number; choice_id: string; pick_rate: number; is_correct: boolean }[]) {
+    const arr = distMap.get(d.post_id) ?? [];
+    arr.push(d);
+    distMap.set(d.post_id, arr);
+  }
+
+  return cards.map((r) => {
+    const post = r.post as { id: number; prompt: string; choices: { id: string; text: string }[] };
+    const dm = diffMap.get(post.id);
+    const text = new Map(post.choices.map((c) => [c.id, c.text]));
+    const distractors = (distMap.get(post.id) ?? [])
+      .map((x) => ({ choiceId: x.choice_id, text: text.get(x.choice_id) ?? x.choice_id, pickRate: x.pick_rate, isCorrect: x.is_correct }))
+      .sort((a, b) => b.pickRate - a.pickRate);
+    return {
+      postId: post.id,
+      position: r.position,
+      prompt: post.prompt,
+      attempts: dm?.attempts ?? 0,
+      students: dm?.students ?? 0,
+      correctRate: dm?.correct_rate ?? null,
+      medianMs: dm?.median_ms ?? null,
+      distractors,
+    };
+  });
 }
 
 /** Class roster + per-student progress (RLS: staff see their tenant's students). */

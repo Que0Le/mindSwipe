@@ -12,7 +12,7 @@ interface Props {
   answers: Record<number, string[]>;
   onToggleLike: (id: number) => void;
   onToggleSave: (id: number) => void;
-  onAnswer: (id: number, choiceIds: string[]) => void;
+  onAnswer: (id: number, choiceIds: string[], durationMs?: number) => void;
   onOpen: (post: Post) => void;
   onActiveChange?: (id: number | null) => void;
   resetToken?: number;

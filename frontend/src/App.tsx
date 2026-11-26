@@ -220,7 +220,7 @@ export default function App() {
     }
   }
 
-  function recordAnswer(id: number, choiceIds: string[]) {
+  function recordAnswer(id: number, choiceIds: string[], durationMs?: number) {
     if (answers[id]) return;
     setAnswers((prev) => {
       if (prev[id]) return prev;
@@ -228,7 +228,7 @@ export default function App() {
       saveAnswers(next);
       return next;
     });
-    void recordAttempt(id, choiceIds);
+    void recordAttempt(id, choiceIds, durationMs);
   }
 
   if (!identity) {

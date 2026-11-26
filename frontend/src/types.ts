@@ -97,6 +97,24 @@ export interface Assignment {
   progress: { total: number; attempted: number; correct: number };
 }
 
+export interface Distractor {
+  choiceId: string;
+  text: string;
+  pickRate: number;
+  isCorrect: boolean;
+}
+
+export interface CardInsight {
+  postId: number;
+  position: number;
+  prompt: string;
+  attempts: number;
+  students: number;
+  correctRate: number | null;
+  medianMs: number | null;
+  distractors: Distractor[];
+}
+
 export interface ClassMember {
   userId: string;
   displayName: string | null;

@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { type Persona } from "../auth";
 import PersonaSwitcher from "./PersonaSwitcher";
+import PlaylistInsights from "./PlaylistInsights";
 
 interface Props {
   identity: Identity;
@@ -43,6 +44,7 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
   // A flag-gated teaching tool opened from the dashboard.
   const [tool, setTool] = useState<"authoring" | "monitoring" | null>(null);
   const [roster, setRoster] = useState<ClassMember[]>([]);
+  const [insights, setInsights] = useState<{ id: number; title: string } | null>(null);
 
   const flags = identity.flags;
   const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
@@ -262,6 +264,15 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
                     {p.description && <p>{p.description}</p>}
                     <span className="playlist-count">{p.count} cards</span>
                   </div>
+                  {isStaff && (
+                    <button
+                      className="btn-insights"
+                      aria-label="Insights"
+                      onClick={() => setInsights({ id: p.id, title: p.title })}
+                    >
+                      📊
+                    </button>
+                  )}
                   <button
                     className="btn-go"
                     onClick={() => onStartSession({ type: "playlist", playlistId: p.id, title: p.title })}
@@ -323,6 +334,14 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
             )}
           </div>
         </div>
+      )}
+
+      {insights && (
+        <PlaylistInsights
+          playlistId={insights.id}
+          title={insights.title}
+          onClose={() => setInsights(null)}
+        />
       )}
     </div>
   );

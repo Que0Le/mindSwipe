@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Post } from "../types";
 import { sanitizeHtml } from "../sanitize";
 
@@ -12,13 +12,14 @@ interface Props {
   answer?: string[];
   onToggleLike: (id: number) => void;
   onToggleSave: (id: number) => void;
-  onAnswer: (id: number, choiceIds: string[]) => void;
+  onAnswer: (id: number, choiceIds: string[], durationMs?: number) => void;
   onOpen: (post: Post) => void;
   resetToken?: number;
 }
 
 export default function Card({
   post,
+  active,
   liked,
   saved,
   answer,
@@ -43,6 +44,13 @@ export default function Card({
     if (resetToken) setSelected([]);
   }, [resetToken]);
 
+  // Time-to-answer: start the clock when this card becomes the active one, stop
+  // at submit. Feeds median_ms in the content-analytics views.
+  const shownAt = useRef(0);
+  useEffect(() => {
+    if (active && !answered && shownAt.current === 0) shownAt.current = Date.now();
+  }, [active, answered]);
+
   function choose(choiceId: string) {
     if (answered) return;
     setSelected((prev) =>
@@ -52,7 +60,9 @@ export default function Card({
 
   function submit() {
     if (answered || selected.length === 0) return;
-    onAnswer(post.id, selected);
+    // Cap at 10 min so a card left open (locked phone, distraction) doesn't skew.
+    const durationMs = shownAt.current ? Math.min(Date.now() - shownAt.current, 600_000) : undefined;
+    onAnswer(post.id, selected, durationMs);
   }
 
   function choiceState(choiceId: string): string {
