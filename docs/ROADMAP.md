@@ -216,6 +216,134 @@ Stage it: (1) move the dashboard to its own route, (2) add class/teaching model
 + seed 7A/7B with a subject teacher and a homeroom teacher, (3) class roster +
 per-student stat page, (4) subject vs homeroom scoping, (5) student search.
 
+#### Model decision — generic groups/roles (supersedes class/teaching above)
+
+The `class`/`teaching`/`membership.class_id` sketch above is **German-specific**
+(one pupil : one class). Pressure-testing it against US sections and German
+*university courses* (fluid attendance, students float between TA exercise
+groups) breaks the 1:1 assumption. So model the **invariant**, not the country:
+
+- `group(id, tenant_id, kind, name, parent_id?, metadata jsonb)` — `kind` ∈
+  {class, section, course, exercise_group, homeroom, cohort, set, …}. Country
+  variation lives in `kind` + `metadata`, as **data**, not schema. `parent_id`
+  nests exercise_group under course.
+- `group_member(group_id, user_id, role, subject?)` — a person in a group with a
+  role (student / teacher / assistant / homeroom / lead) and an optional
+  **subject on the attachment** (German Klasse is subject-agnostic, the subject
+  comes from *which teacher*; a US section *is* its subject — both fall out of
+  this column). Student↔group membership is **soft** (attendance, not an
+  enrollment lock) so fluid attendance works.
+- Visibility derives from **shared group + leading role**, generalising
+  `staff_sees_user`: *"I can see student S if we share a group where I teach,
+  scoped to my subject — unless I'm homeroom/lead (all subjects)."*
+- Do **not** build a per-country config/rules engine (YAGNI). Ship one `kind`
+  (German `class`) first; new countries add `kind` values + `metadata`, no schema
+  change. Accepted cost: a couple of DB constraints (e.g. "exactly one class")
+  become app/kind rules instead of FKs.
+
+#### Two dashboard axes — content vs roster (they are different features)
+
+Pressure-testing against the university course (a prof + 5 TAs, ~200 students,
+free attendance) showed the dashboard is **two orthogonal things**:
+
+| | **Content / difficulty axis** | **Roster / progress axis** |
+| --- | --- | --- |
+| Question | "How is *my playlist* performing?" | "How is *this named student* doing?" |
+| Keyed on | playlist → attempts on its cards | who-can-see-whom (groups/roles) |
+| Needs a roster? | **No** | Yes |
+| Attendance | irrelevant (aggregates engagers) | soft membership |
+| Privacy | aggregate, context-scoped | per-student, gated |
+| Who | author (prof/TA) of the playlist | prof (all), TA (their group), homeroom |
+
+The content axis needs **none** of the class/group machinery — only `playlist` +
+`attempt`, both of which exist. Build it first; the roster axis (groups/roles)
+second. A TA's "is my set too easy (many green) or too hard?" is the content axis.
+
+#### Weekly / recurring publishing
+
+A prof releasing "Warm-up #week1", "#week2", … (and a final-exam set) is just
+multiple playlists in a course with a **release schedule + a label**, not a new
+concept. Add to `playlist`: `group_id` (the course/group it is published into),
+`available_from` (release gate), `due_at?`, and `label`/`seq` (week ordering;
+a `kind` like warm_up | exam | deep_dive). Because the difficulty view keys *per
+playlist*, **per-week difficulty feedback falls out automatically** — list a
+course's weekly playlists, each with its own difficulty profile. This is
+*instructor-driven release* and is distinct from *system-driven* spaced
+repetition (the Learning-engine item); keep them separate.
+
+#### Usage-data ownership & privacy (the governing rule)
+
+Publishing a playlist/template conveys ownership of the **content**, and **no
+claim on the statistics of others using it.** Usage data belongs to the
+**context** (tenant / course) where it was generated. Consequences:
+
+- A publisher — including the provider — **never** sees another tenant's usage of
+  their list, **not even in aggregate.** Aggregate hides individual names but
+  still exposes the *group's* performance ("Riverdale averages 41% on topic X"),
+  which is exactly what a private circle pays to keep private. Honors the existing
+  `provider_analytics` flag / "data stays with them" requirement.
+- Enforcement is **RLS, for free**: the difficulty view is `security_invoker`
+  over `attempt`, so it can only count attempts the viewer may read — attempt RLS
+  already scopes a teacher to their own tenant's students. A publisher with no
+  staff role inside another circle aggregates *none* of its attempts; the database
+  refuses. (A service-role aggregator would have to *remember* to exclude private
+  circles — one missed filter = breach. The RLS view *cannot* include them. This
+  is the concrete reason the gate stays in the DB, not an app/Java layer.)
+- The only cross-tenant rollup (a provider-wide dashboard over *consenting*
+  tenants) is the trusted-tier's job and must filter `provider_analytics = off`
+  out; it is a separate, later surface, not this in-app view.
+
+#### Prerequisite — stamp attempts with their context
+
+`attempt.tenant_id` currently defaults to 1 (unreliable). The in-app difficulty
+view is still correct, because its RLS scoping keys off *membership*, not
+`attempt.tenant_id`. But for a per-context grouping column and any future
+course/group-level rollups, stamp each attempt at insert with the actor's
+tenant (later course/group) via a trigger from their active membership. Hygiene
+now, load-bearing once rollups span courses.
+
+#### Spec — `playlist_difficulty` view (the content axis, build first)
+
+Per card of a playlist, aggregated over the attempts the caller may read:
+
+```sql
+create view public.playlist_difficulty with (security_invoker = true) as
+select
+    pi.playlist_id,
+    pi.post_id,
+    pi.position,
+    count(*)                                        as attempts,
+    count(distinct a.user_id)                       as students,
+    count(*) filter (
+        where public.selected_is_correct(a.selected, p.answer -> 'correct')
+    )                                               as correct,
+    round(
+        100.0 * count(*) filter (
+            where public.selected_is_correct(a.selected, p.answer -> 'correct')
+        ) / nullif(count(*), 0)
+    )                                               as correct_rate   -- "% green"
+from public.playlist_item pi
+join public.attempt a on a.post_id = pi.post_id
+join public.post p     on p.id      = pi.post_id
+group by pi.playlist_id, pi.post_id, pi.position;
+-- grant select to authenticated; RLS on attempt (security_invoker) is what
+-- partitions this per context — a viewer only counts attempts they may read.
+```
+
+- **Reading it:** each row is one card's % correct across everyone the caller is
+  entitled to see. "Many green" = high `correct_rate` ⇒ too easy; low ⇒ too hard.
+- **Playlist-level profile** (for the "too easy / too hard" verdict): bucket the
+  cards by `correct_rate` — e.g. easy ≥ 85, hard ≤ 40 — and classify the set
+  (mostly-easy / balanced / mostly-hard). A thin rollup view or client-side.
+- **Visibility:** scoped by attempt RLS. For a TA to see their own playlist's
+  aggregate, the staff gate must include their role (`assistant`/`lead`), **or**
+  add an author rule — *the playlist's `created_by` may read aggregate difficulty
+  of their own playlist, context-scoped.* Prefer the author rule: an author sees
+  their set's difficulty without being tenant-admin, still only within contexts
+  RLS lets them read.
+- **Needs nothing new structurally** — `playlist`, `playlist_item`, `attempt`,
+  `post` all exist. This is the highest-value, lowest-risk next slice.
+
 ### Tech details
 
 - **Why Supabase, not a forum/LMS engine:** Discourse/Moodle have no in-app
