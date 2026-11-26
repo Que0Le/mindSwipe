@@ -8,15 +8,6 @@ export interface Answer {
   explanation: string;
 }
 
-export interface Comment {
-  id: number;
-  postId: number;
-  posterId: string;
-  kind: "tip" | "related" | "question" | "user" | string;
-  content: string;
-  createdAt: string;
-}
-
 export interface Post {
   id: number;
   kind: "text" | "card";
@@ -31,11 +22,79 @@ export interface Post {
   tags: string[];
   likeCount: number;
   createdAt: string;
-  comments?: Comment[];
 }
 
 export interface FeedPage {
   items: Post[];
   nextCursor: number | null;
   hasMore: boolean;
+}
+
+// --- identity / tenancy ----------------------------------------------------
+
+export type Role = "student" | "teacher" | "author" | "tenant_admin";
+
+export interface Identity {
+  userId: string;
+  isAnonymous: boolean;
+  tenantId: number | null;
+  role: Role | null;
+  displayName: string | null;
+}
+
+// --- dashboard -------------------------------------------------------------
+
+export interface Stats {
+  answered: number;
+  correct: number;
+  likes: number;
+  viewed: number;
+}
+
+export interface TopicMastery {
+  topic: string;
+  answered: number;
+  correct: number;
+}
+
+export interface Playlist {
+  id: number;
+  slug: string;
+  title: string;
+  description: string | null;
+  count: number;
+}
+
+export interface Assignment {
+  id: number;
+  title: string;
+  description: string | null;
+  sourceType: "playlist" | "topic";
+  playlistId: number | null;
+  topic: string | null;
+  assignee: string | null; // null = whole tenant
+  dueAt: string | null;
+  progress: { total: number; attempted: number; correct: number };
+}
+
+// A swipe session always runs over one of these sources.
+export type FeedSource =
+  | { type: "all" }
+  | { type: "topic"; topic: string }
+  | { type: "random"; topics: string[] }
+  | { type: "playlist"; playlistId: number; title?: string }
+  | { type: "assignment"; assignmentId: number; title?: string };
+
+// --- comments (teacher-moderated student discussion) -----------------------
+
+export type ModerationStatus = "pending" | "approved" | "rejected";
+
+export interface Comment {
+  id: number;
+  postId: number;
+  body: string;
+  status: ModerationStatus;
+  mine: boolean;
+  authorName: string | null;
+  createdAt: string;
 }

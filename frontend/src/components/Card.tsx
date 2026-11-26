@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Post } from "../types";
+import { sanitizeHtml } from "../sanitize";
 
 const DIFFICULTY = ["", "Beginner", "Easy", "Medium", "Hard", "Expert"];
 
@@ -78,9 +79,11 @@ export default function Card({
 
         <h2 className="prompt">{post.prompt}</h2>
 
-        {/* Authored/trusted content. Rendered as HTML by design (text + "card"
-            styling). Sanitize here before enabling any user-generated source. */}
-        <div className="post-html" dangerouslySetInnerHTML={{ __html: post.bodyHtml }} />
+        {/* Authored content, rendered as HTML by design and run through DOMPurify
+            so the render path is safe once author/UGC sources arrive. */}
+        {post.bodyHtml && (
+          <div className="post-html" dangerouslySetInnerHTML={{ __html: sanitizeHtml(post.bodyHtml) }} />
+        )}
 
         {isMcq && (
           <>

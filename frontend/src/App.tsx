@@ -1,102 +1,135 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Post } from "./types";
+import type { FeedSource, Identity, Post } from "./types";
 import {
   clearUserActivity,
-  getTopics,
+  getPost,
   getUserState,
   recordAttempt,
   recordView,
   setReaction,
 } from "./api";
-import { ensureAuth } from "./supabase";
-import {
-  KEYS,
-  loadAnswers,
-  loadLikes,
-  loadSaves,
-  save,
-  type AnswerMap,
-  type BoolMap,
-} from "./localState";
+import { ensureAuth, getIdentity, signInAs, type Persona } from "./auth";
+import { KEYS, loadAnswers, loadLikes, loadSaves, save, type AnswerMap, type BoolMap } from "./localState";
+import Dashboard from "./components/Dashboard";
 import Feed from "./components/Feed";
 import Detail from "./components/Detail";
 
+type View = "dashboard" | "swipe";
+
+function sourceTitle(s: FeedSource): string {
+  switch (s.type) {
+    case "topic":
+      return s.topic;
+    case "playlist":
+      return s.title ?? "Playlist";
+    case "assignment":
+      return s.title ?? "Assignment";
+    case "random":
+      return "My topics";
+    default:
+      return "All cards";
+  }
+}
+
 export default function App() {
-  const [topic, setTopic] = useState<string | null>(null);
-  const [topics, setTopics] = useState<{ topic: string; count: number }[]>([]);
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [view, setView] = useState<View>("dashboard");
+  const [source, setSource] = useState<FeedSource>({ type: "all" });
   const [openPost, setOpenPost] = useState<Post | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Bumped by "Clear all" to tell cards to drop any pending (pre-submit) pick.
   const [resetToken, setResetToken] = useState(0);
 
-  // localStorage gives instant, offline-safe UI; Supabase is the durable store.
   const [likes, setLikes] = useState<BoolMap>(() => loadLikes());
   const [saves, setSaves] = useState<BoolMap>(() => loadSaves());
   const [answers, setAnswers] = useState<AnswerMap>(() => loadAnswers());
 
-  // Record each card view at most once per session.
   const viewed = useRef<Set<number>>(new Set());
 
-  // Post id from the URL on first load (e.g. /?id=123), for deep links / refresh.
-  const initialId = useRef<number | null>(
-    (() => {
-      const raw = new URLSearchParams(window.location.search).get("id");
-      const n = raw ? Number.parseInt(raw, 10) : NaN;
-      return Number.isInteger(n) && n > 0 ? n : null;
-    })()
-  ).current;
-
-  // Topics for the filter.
-  useEffect(() => {
-    getTopics().then(setTopics);
-  }, []);
-
-  // Sign in anonymously, then hydrate likes/answers from the DB (server wins).
+  // Sign in (remembered persona, default Public/anon), load identity + state.
   useEffect(() => {
     let alive = true;
     ensureAuth()
-      .then(() => getUserState())
-      .then(({ likes: sl, answers: sa }) => {
+      .then(() => Promise.all([getIdentity(), getUserState()]))
+      .then(([id, { likes: sl, answers: sa }]) => {
         if (!alive) return;
+        setIdentity(id);
         setLikes((prev) => ({ ...prev, ...sl }));
         setAnswers((prev) => ({ ...prev, ...sa }));
       })
       .catch(() => {
-        /* offline / box down — keep local state */
+        if (alive) setIdentity({ userId: "", isAnonymous: true, tenantId: null, role: null, displayName: null });
       });
     return () => {
       alive = false;
     };
   }, []);
 
-  // Mirror the active feed card in the URL (silent) and record the view.
+  // History: dashboard (base) → swipe → detail, each one level deep, so the
+  // browser/OS back button unwinds exactly one step at a time.
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const ms = (e.state as { ms?: string; id?: number } | null)?.ms;
+      if (ms === "detail") {
+        const id = (e.state as { id?: number }).id;
+        if (id) getPost(id).then((p) => p && setOpenPost(p));
+        setView("swipe");
+      } else if (ms === "swipe") {
+        setOpenPost(null);
+        setView("swipe");
+      } else {
+        setOpenPost(null);
+        setView("dashboard");
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const startSession = useCallback((s: FeedSource) => {
+    setSource(s);
+    setView("swipe");
+    viewed.current = new Set();
+    window.history.pushState({ ms: "swipe" }, "", window.location.pathname);
+  }, []);
+
+  const exitToDashboard = useCallback(() => {
+    if ((window.history.state as { ms?: string } | null)?.ms) window.history.back();
+    else setView("dashboard");
+  }, []);
+
+  const openDetail = useCallback((post: Post) => {
+    window.history.pushState({ ms: "detail", id: post.id }, "", `${window.location.pathname}?id=${post.id}`);
+    setOpenPost(post);
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    if ((window.history.state as { ms?: string } | null)?.ms === "detail") window.history.back();
+    else setOpenPost(null);
+  }, []);
+
   const onActiveChange = useCallback((id: number | null) => {
-    const url = id ? `${window.location.pathname}?id=${id}` : window.location.pathname;
-    window.history.replaceState(window.history.state, "", url);
     if (id && !viewed.current.has(id)) {
       viewed.current.add(id);
       void recordView(id);
     }
   }, []);
 
-  const openDetail = useCallback((post: Post) => {
-    window.history.pushState({ detail: post.id }, "", `${window.location.pathname}?id=${post.id}`);
-    setOpenPost(post);
-  }, []);
+  async function switchPersona(p: Persona) {
+    try {
+      localStorage.removeItem(KEYS.likes);
+      localStorage.removeItem(KEYS.saves);
+      localStorage.removeItem(KEYS.answers);
+    } catch {
+      /* ignore */
+    }
+    try {
+      await signInAs(p);
+    } catch {
+      /* fall through to reload — ensureAuth will recover */
+    }
+    window.location.reload();
+  }
 
-  const closeDetail = useCallback(() => {
-    if (window.history.state?.detail) window.history.back();
-    else setOpenPost(null);
-  }, []);
-
-  useEffect(() => {
-    const onPop = () => setOpenPost(null);
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  // The network writes live OUTSIDE the state updaters: updaters must be pure
-  // (React 18 StrictMode double-invokes them, which would double-fire writes).
   function toggleLike(id: number) {
     const nextLiked = !likes[id];
     setLikes((prev) => {
@@ -109,7 +142,6 @@ export default function App() {
     void setReaction(id, "like", nextLiked);
   }
 
-  // Saves/bookmarks stay local in build-1 (no server table yet).
   function toggleSave(id: number) {
     setSaves((prev) => {
       const next = { ...prev, [id]: !prev[id] };
@@ -119,8 +151,6 @@ export default function App() {
     });
   }
 
-  // Wipe this user's choices/results — locally and on the server — so the feed
-  // resets to unanswered (and stays reset after a reload).
   async function clearAll() {
     setMenuOpen(false);
     setAnswers({});
@@ -134,12 +164,12 @@ export default function App() {
     try {
       await clearUserActivity();
     } catch {
-      /* best-effort — local state is already cleared */
+      /* best-effort */
     }
   }
 
   function recordAnswer(id: number, choiceIds: string[]) {
-    if (answers[id]) return; // already answered (Card also disables after submit)
+    if (answers[id]) return;
     setAnswers((prev) => {
       if (prev[id]) return prev;
       const next = { ...prev, [id]: choiceIds };
@@ -149,52 +179,54 @@ export default function App() {
     void recordAttempt(id, choiceIds);
   }
 
+  if (!identity) {
+    return (
+      <div className="app">
+        <div className="splash">Loading…</div>
+      </div>
+    );
+  }
+
+  if (view === "dashboard") {
+    return (
+      <div className="app">
+        <Dashboard identity={identity} onStartSession={startSession} onSwitchPersona={switchPersona} />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">mindSwipe</div>
-
-        <div className="topbar-right">
-          <select
-            className="topic-select"
-            value={topic ?? ""}
-            onChange={(e) => setTopic(e.target.value || null)}
-            aria-label="Filter by topic"
+        <button className="back" onClick={exitToDashboard} aria-label="Back to dashboard">
+          ← Home
+        </button>
+        <span className="swipe-title">{sourceTitle(source)}</span>
+        <div className="menu">
+          <button
+            className="menu-btn"
+            aria-label="More options"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((o) => !o)}
           >
-            <option value="">All topics</option>
-            {topics.map((t) => (
-              <option key={t.topic} value={t.topic}>
-                {t.topic} ({t.count})
-              </option>
-            ))}
-          </select>
-
-          <div className="menu">
-            <button
-              className="menu-btn"
-              aria-label="More options"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((o) => !o)}
-            >
-              ⋮
-            </button>
-            {menuOpen && (
-              <>
-                <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
-                <div className="menu-pop" role="menu">
-                  <button role="menuitem" className="menu-item" onClick={clearAll}>
-                    Clear all
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+            ⋮
+          </button>
+          {menuOpen && (
+            <>
+              <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
+              <div className="menu-pop" role="menu">
+                <button role="menuitem" className="menu-item" onClick={clearAll}>
+                  Clear all
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
       <Feed
-        topic={topic}
+        source={source}
         likes={likes}
         saves={saves}
         answers={answers}
@@ -202,12 +234,11 @@ export default function App() {
         onToggleSave={toggleSave}
         onAnswer={recordAnswer}
         onOpen={openDetail}
-        initialId={initialId}
         onActiveChange={onActiveChange}
         resetToken={resetToken}
       />
 
-      {openPost && <Detail post={openPost} onClose={closeDetail} />}
+      {openPost && <Detail post={openPost} identity={identity} onClose={closeDetail} />}
     </div>
   );
 }

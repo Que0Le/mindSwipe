@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Post } from "../types";
+import type { FeedSource, Post } from "../types";
 import { getFeed } from "../api";
 import Card from "./Card";
 
 interface Props {
-  topic: string | null;
+  source: FeedSource;
   likes: Record<number, boolean>;
   saves: Record<number, boolean>;
   answers: Record<number, string[]>;
@@ -12,25 +12,16 @@ interface Props {
   onToggleSave: (id: number) => void;
   onAnswer: (id: number, choiceIds: string[]) => void;
   onOpen: (post: Post) => void;
-  // Deep-link: start the feed at this post id (first mount only). Forward-only,
-  // so there's nothing above it to scroll up to — scrolling down continues.
-  initialId?: number | null;
-  // Fires when the snapped card changes, with its id (null when empty).
   onActiveChange?: (id: number | null) => void;
-  // Bumped to tell cards to drop any pending (pre-submit) selection.
   resetToken?: number;
 }
 
 const BATCH = 8;
-// How many cards to keep mounted around the active one. Everything outside the
-// window renders as an empty, full-height slot so scroll position is preserved
-// but the DOM stays tiny - this is what keeps it smooth and battery-cheap on a
-// phone even with hundreds of posts.
 const WINDOW_BEFORE = 1;
 const WINDOW_AFTER = 2;
 
 export default function Feed({
-  topic,
+  source,
   likes,
   saves,
   answers,
@@ -38,7 +29,6 @@ export default function Feed({
   onToggleSave,
   onAnswer,
   onOpen,
-  initialId,
   onActiveChange,
   resetToken,
 }: Props) {
@@ -51,14 +41,16 @@ export default function Feed({
   const loadingRef = useRef(false);
   const cursorRef = useRef(0);
   const hasMoreRef = useRef(true);
-  const firstLoadRef = useRef(true);
+
+  // A stable key so the reset effect fires only when the source really changes.
+  const sourceKey = JSON.stringify(source);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current || !hasMoreRef.current) return;
     loadingRef.current = true;
     setLoading(true);
     try {
-      const page = await getFeed({ cursor: cursorRef.current, limit: BATCH, topic });
+      const page = await getFeed({ source, cursor: cursorRef.current, limit: BATCH });
       setPosts((prev) => {
         const seen = new Set(prev.map((p) => p.id));
         return [...prev, ...page.items.filter((p) => !seen.has(p.id))];
@@ -70,34 +62,26 @@ export default function Feed({
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [topic]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceKey]);
 
-  // Reset and reload when the topic filter changes. On the very first load,
-  // honour a deep-linked id by starting the cursor just before it; any later
-  // topic change starts from the top.
+  // Reset and reload whenever the source changes.
   useEffect(() => {
-    const start = firstLoadRef.current && initialId && initialId > 0 ? initialId - 1 : 0;
-    firstLoadRef.current = false;
     setPosts([]);
     setActive(0);
-    cursorRef.current = start;
+    cursorRef.current = 0;
     hasMoreRef.current = true;
     setHasMore(true);
     scrollerRef.current?.scrollTo({ top: 0 });
     loadMore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic]);
+  }, [sourceKey]);
 
-  // Keep the URL in sync with the snapped card (App uses replaceState so this
-  // never floods history). Skip while empty so a deep-linked id isn't wiped
-  // before the first batch arrives.
   useEffect(() => {
     if (posts.length === 0) return;
     onActiveChange?.(posts[active]?.id ?? null);
   }, [active, posts, onActiveChange]);
 
-  // Track the active (snapped) card from scroll position, rAF-throttled, and
-  // prefetch the next batch as we near the end.
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -153,7 +137,7 @@ export default function Feed({
         <section className="slot">
           <div className="empty">
             <p>You&apos;ve reached the end.</p>
-            <p className="empty-sub">That&apos;s every card in this filter.</p>
+            <p className="empty-sub">That&apos;s every card in this set.</p>
           </div>
         </section>
       )}

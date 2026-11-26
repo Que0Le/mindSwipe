@@ -1,6 +1,17 @@
-import type { Comment, FeedPage, Post } from "./types";
+import type {
+  Assignment,
+  Comment,
+  FeedPage,
+  FeedSource,
+  ModerationStatus,
+  Playlist,
+  Post,
+  Stats,
+  TopicMastery,
+} from "./types";
 import type { BoolMap, AnswerMap } from "./localState";
-import { supabase, ensureAuth } from "./supabase";
+import { supabase } from "./supabase";
+import { ensureAuth } from "./auth";
 
 // Columns we read for a card. Exercise mode ships the answer for instant grading.
 const POST_COLS =
@@ -22,14 +33,9 @@ interface DbPost {
 }
 
 function esc(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Compose the detail view's extra notes from the authored fields (the answer's
-// explanation is shown separately by the Detail component).
 function composeDetailHtml(detail: DbPost["detail"]): string {
   if (!detail) return "";
   const parts: string[] = [];
@@ -59,32 +65,79 @@ function mapPost(r: DbPost): Post {
   };
 }
 
-interface FeedParams {
-  cursor?: number;
-  limit?: number;
-  topic?: string | null;
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
-/** Keyset-paginated feed via PostgREST (id > cursor). */
-export async function getFeed({ cursor = 0, limit = 8, topic = null }: FeedParams): Promise<FeedPage> {
+interface FeedParams {
+  source: FeedSource;
+  cursor?: number;
+  limit?: number;
+}
+
+/**
+ * The one feed engine. Large open-ended sources (all / topic / random) are
+ * keyset-paginated (id > cursor); bounded curated sources (playlist / assignment)
+ * return their whole set in one page.
+ */
+export async function getFeed({ source, cursor = 0, limit = 8 }: FeedParams): Promise<FeedPage> {
+  if (source.type === "playlist") {
+    const { data, error } = await supabase
+      .from("playlist_item")
+      .select(`position, post:post(${POST_COLS})`)
+      .eq("playlist_id", source.playlistId)
+      .order("position", { ascending: true });
+    if (error) throw error;
+    const items = ((data ?? []) as unknown as { post: DbPost | null }[])
+      .map((r) => r.post)
+      .filter((p): p is DbPost => !!p)
+      .map(mapPost);
+    return { items, nextCursor: null, hasMore: false };
+  }
+
+  if (source.type === "assignment") {
+    const ids = await supabase
+      .from("assignment_post")
+      .select("post_id")
+      .eq("assignment_id", source.assignmentId);
+    if (ids.error) throw ids.error;
+    const postIds = (ids.data ?? []).map((r) => (r as { post_id: number }).post_id);
+    if (postIds.length === 0) return { items: [], nextCursor: null, hasMore: false };
+    const { data, error } = await supabase
+      .from("post")
+      .select(POST_COLS)
+      .in("id", postIds)
+      .order("id", { ascending: true });
+    if (error) throw error;
+    return { items: ((data ?? []) as unknown as DbPost[]).map(mapPost), nextCursor: null, hasMore: false };
+  }
+
+  // Open-ended: keyset pagination over approved posts.
   let query = supabase
     .from("post")
     .select(POST_COLS)
-    .eq("tenant_id", 1)
     .gt("id", cursor)
     .order("id", { ascending: true })
-    .limit(limit + 1); // fetch one extra to compute hasMore
-  if (topic) query = query.eq("topic", topic);
+    .limit(limit + 1);
+  if (source.type === "topic") query = query.eq("topic", source.topic);
+  if (source.type === "random") {
+    if (source.topics.length === 0) return { items: [], nextCursor: null, hasMore: false };
+    query = query.in("topic", source.topics);
+  }
 
   const { data, error } = await query;
   if (error) throw error;
-
   const rows = (data ?? []) as unknown as DbPost[];
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
-  const items = page.map(mapPost);
   const nextCursor = page.length ? page[page.length - 1].id : null;
-  return { items, nextCursor, hasMore };
+  const items = page.map(mapPost);
+  return { items: source.type === "random" ? shuffle(items) : items, nextCursor, hasMore };
 }
 
 /** A single card (deep-link / refresh). */
@@ -94,26 +147,169 @@ export async function getPost(id: number): Promise<Post | null> {
   return mapPost(data as unknown as DbPost);
 }
 
-/** Topics with counts, from the topic_count view. */
-export async function getTopics(): Promise<{ topic: string; count: number }[]> {
-  const { data, error } = await supabase.from("topic_count").select("topic,count");
+/** Topics with counts (the topic_count view), optionally filtered by a query. */
+export async function getTopics(q?: string): Promise<{ topic: string; count: number }[]> {
+  let query = supabase.from("topic_count").select("topic,count").order("count", { ascending: false });
+  if (q && q.trim()) query = query.ilike("topic", `%${q.trim()}%`);
+  const { data, error } = await query.limit(200);
   if (error) return [];
   return (data ?? []) as { topic: string; count: number }[];
 }
 
-/** Build-1 has no comments yet. */
-export async function getComments(_postId: number): Promise<Comment[]> {
-  return [];
+// --- dashboard -------------------------------------------------------------
+
+export async function getStats(): Promise<Stats> {
+  await ensureAuth();
+  const { data } = await supabase.from("my_stats").select("*").maybeSingle();
+  return (data as Stats) ?? { answered: 0, correct: 0, likes: 0, viewed: 0 };
 }
 
-// --- writes: every user input lands in the DB, attributed by auth.uid() -----
+export async function getTopicMastery(): Promise<TopicMastery[]> {
+  await ensureAuth();
+  const { data } = await supabase.from("my_topic_mastery").select("*");
+  return (data ?? []) as TopicMastery[];
+}
 
-/** Record one answer attempt (the chosen choice id(s)). */
-export async function recordAttempt(
-  postId: number,
-  selected: string[],
-  durationMs?: number
-): Promise<void> {
+export async function getTopicInterests(): Promise<string[]> {
+  await ensureAuth();
+  const { data } = await supabase.from("topic_interest").select("topic");
+  return ((data ?? []) as { topic: string }[]).map((r) => r.topic);
+}
+
+export async function addTopicInterest(topic: string): Promise<void> {
+  await ensureAuth();
+  const { error } = await supabase.from("topic_interest").insert({ topic });
+  if (error && error.code !== "23505") console.warn("addTopicInterest:", error.message);
+}
+
+export async function removeTopicInterest(topic: string): Promise<void> {
+  await ensureAuth();
+  const { error } = await supabase.from("topic_interest").delete().eq("topic", topic);
+  if (error) console.warn("removeTopicInterest:", error.message);
+}
+
+export async function getPlaylists(): Promise<Playlist[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("playlist")
+    .select("id,slug,title,description,playlist_item(count)")
+    .order("id", { ascending: true });
+  if (error) return [];
+  return ((data ?? []) as unknown as {
+    id: number;
+    slug: string;
+    title: string;
+    description: string | null;
+    playlist_item: { count: number }[];
+  }[]).map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    description: r.description,
+    count: r.playlist_item?.[0]?.count ?? 0,
+  }));
+}
+
+export async function getAssignments(): Promise<Assignment[]> {
+  await ensureAuth();
+  const [{ data: rows }, { data: prog }] = await Promise.all([
+    supabase
+      .from("assignment")
+      .select("id,title,description,source_type,playlist_id,topic,assignee,due_at")
+      .order("due_at", { ascending: true }),
+    supabase.from("my_assignment_progress").select("*"),
+  ]);
+  const progMap = new Map<number, { total: number; attempted: number; correct: number }>();
+  for (const p of (prog ?? []) as { assignment_id: number; total: number; attempted: number; correct: number }[]) {
+    progMap.set(p.assignment_id, { total: p.total, attempted: p.attempted, correct: p.correct });
+  }
+  return ((rows ?? []) as unknown as {
+    id: number;
+    title: string;
+    description: string | null;
+    source_type: "playlist" | "topic";
+    playlist_id: number | null;
+    topic: string | null;
+    assignee: string | null;
+    due_at: string | null;
+  }[]).map((r) => ({
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    sourceType: r.source_type,
+    playlistId: r.playlist_id,
+    topic: r.topic,
+    assignee: r.assignee,
+    dueAt: r.due_at,
+    progress: progMap.get(r.id) ?? { total: 0, attempted: 0, correct: 0 },
+  }));
+}
+
+// --- comments (teacher-moderated) ------------------------------------------
+
+export async function getComments(postId: number): Promise<Comment[]> {
+  await ensureAuth();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const myId = user?.id ?? "";
+  const { data, error } = await supabase
+    .from("comment")
+    .select("id,post_id,body,status,user_id,created_at")
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true });
+  if (error) return [];
+  return ((data ?? []) as {
+    id: number;
+    post_id: number;
+    body: string;
+    status: ModerationStatus;
+    user_id: string;
+    created_at: string;
+  }[]).map((r) => ({
+    id: r.id,
+    postId: r.post_id,
+    body: r.body,
+    status: r.status,
+    mine: r.user_id === myId,
+    authorName: null,
+    createdAt: r.created_at,
+  }));
+}
+
+/** Post a comment. It lands as 'pending' — RLS forbids any other status on insert. */
+export async function postComment(postId: number, tenantId: number, body: string): Promise<Comment | null> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("comment")
+    .insert({ post_id: postId, tenant_id: tenantId, body })
+    .select("id,post_id,body,status,user_id,created_at")
+    .single();
+  if (error) {
+    console.warn("postComment:", error.message);
+    return null;
+  }
+  return {
+    id: data.id,
+    postId: data.post_id,
+    body: data.body,
+    status: data.status,
+    mine: true,
+    authorName: null,
+    createdAt: data.created_at,
+  };
+}
+
+/** Teacher/staff moderation (RLS restricts the UPDATE to staff of the tenant). */
+export async function moderateComment(id: number, status: "approved" | "rejected"): Promise<void> {
+  await ensureAuth();
+  const { error } = await supabase.from("comment").update({ status }).eq("id", id);
+  if (error) console.warn("moderateComment:", error.message);
+}
+
+// --- writes (build-1, unchanged) -------------------------------------------
+
+export async function recordAttempt(postId: number, selected: string[], durationMs?: number): Promise<void> {
   await ensureAuth();
   const { error } = await supabase
     .from("attempt")
@@ -121,27 +317,17 @@ export async function recordAttempt(
   if (error) console.warn("recordAttempt failed:", error.message);
 }
 
-/** Turn a reaction on (insert, ignore duplicate) or off (delete). */
-export async function setReaction(
-  postId: number,
-  kind: "like" | "dislike",
-  on: boolean
-): Promise<void> {
+export async function setReaction(postId: number, kind: "like" | "dislike", on: boolean): Promise<void> {
   await ensureAuth();
   if (on) {
     const { error } = await supabase.from("reaction").insert({ post_id: postId, kind });
     if (error && error.code !== "23505") console.warn("setReaction failed:", error.message);
   } else {
-    const { error } = await supabase
-      .from("reaction")
-      .delete()
-      .eq("post_id", postId)
-      .eq("kind", kind);
+    const { error } = await supabase.from("reaction").delete().eq("post_id", postId).eq("kind", kind);
     if (error) console.warn("clearReaction failed:", error.message);
   }
 }
 
-/** Record that the user viewed a card. */
 export async function recordView(postId: number): Promise<void> {
   await ensureAuth();
   const { error } = await supabase.from("view_event").insert({ post_id: postId });
@@ -167,8 +353,6 @@ export async function getUserState(): Promise<{ likes: BoolMap; answers: AnswerM
 /** Delete this user's attempts + reactions (RLS scopes it to their own rows). */
 export async function clearUserActivity(): Promise<void> {
   await ensureAuth();
-  // PostgREST requires a filter on delete; `id >= 0` matches all of the caller's
-  // rows (RLS already restricts the set to auth.uid()).
   const att = await supabase.from("attempt").delete().gte("id", 0);
   if (att.error) console.warn("clear attempts failed:", att.error.message);
   const rea = await supabase.from("reaction").delete().gte("id", 0);

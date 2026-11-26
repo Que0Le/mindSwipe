@@ -1,24 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import type { Comment, Post } from "../types";
-import { getComments } from "../api";
+import type { Comment, Identity, Post } from "../types";
+import { getComments, moderateComment, postComment } from "../api";
+import { sanitizeHtml } from "../sanitize";
 
 interface Props {
   post: Post;
+  identity: Identity;
   onClose: () => void;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  tip: "Tip",
-  related: "Related",
-  question: "Open question",
-  user: "Comment",
-};
-
-export default function Detail({ post, onClose }: Props) {
-  const [comments, setComments] = useState<Comment[]>(post.comments ?? []);
+export default function Detail({ post, identity, onClose }: Props) {
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
   const startX = useRef<number | null>(null);
   const dx = useRef(0);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const isMember = identity.tenantId != null;
+  const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
 
   useEffect(() => {
     let alive = true;
@@ -30,7 +30,24 @@ export default function Detail({ post, onClose }: Props) {
     };
   }, [post.id]);
 
-  // Swipe-right to go back to the feed (matches the native-app gesture).
+  async function submit() {
+    const body = draft.trim();
+    if (!body || posting || identity.tenantId == null) return;
+    setPosting(true);
+    const c = await postComment(post.id, identity.tenantId, body);
+    setPosting(false);
+    if (c) {
+      setComments((prev) => [...prev, c]);
+      setDraft("");
+    }
+  }
+
+  async function moderate(id: number, status: "approved" | "rejected") {
+    await moderateComment(id, status);
+    setComments((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
+  }
+
+  // Swipe-right to go back (matches the native gesture).
   function onTouchStart(e: React.TouchEvent) {
     startX.current = e.touches[0].clientX;
     dx.current = 0;
@@ -48,6 +65,8 @@ export default function Detail({ post, onClose }: Props) {
     startX.current = null;
     dx.current = 0;
   }
+
+  const visible = comments.filter((c) => c.status === "approved" || c.mine || isStaff);
 
   return (
     <div className="detail-scrim" onClick={onClose}>
@@ -68,7 +87,9 @@ export default function Detail({ post, onClose }: Props) {
 
         <div className="detail-content">
           <h2 className="prompt">{post.prompt}</h2>
-          <div className="post-html" dangerouslySetInnerHTML={{ __html: post.bodyHtml }} />
+          {post.bodyHtml && (
+            <div className="post-html" dangerouslySetInnerHTML={{ __html: sanitizeHtml(post.bodyHtml) }} />
+          )}
 
           {post.answer.explanation && (
             <div className="answer-box">
@@ -78,7 +99,10 @@ export default function Detail({ post, onClose }: Props) {
           )}
 
           {post.detailHtml && (
-            <div className="detail-notes post-html" dangerouslySetInnerHTML={{ __html: post.detailHtml }} />
+            <div
+              className="detail-notes post-html"
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(post.detailHtml) }}
+            />
           )}
 
           {post.tags.length > 0 && (
@@ -92,11 +116,45 @@ export default function Detail({ post, onClose }: Props) {
           )}
 
           <section className="comments">
-            <h3>{comments.length ? "Notes" : "No notes yet"}</h3>
-            {comments.map((c) => (
-              <div className={`comment comment-${c.kind}`} key={c.id}>
-                <span className="comment-kind">{KIND_LABEL[c.kind] ?? c.kind}</span>
-                <p>{c.content}</p>
+            <h3>Discussion</h3>
+
+            {!isMember && <p className="comments-note">Join a class to take part in the discussion.</p>}
+
+            {isMember && (
+              <div className="comment-compose">
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="Add a comment…"
+                  maxLength={2000}
+                  rows={2}
+                />
+                <button className="comment-send" onClick={submit} disabled={posting || !draft.trim()}>
+                  {posting ? "Posting…" : "Post"}
+                </button>
+                <p className="comments-note">Comments are reviewed by a teacher before they appear.</p>
+              </div>
+            )}
+
+            {visible.length === 0 && isMember && <p className="comments-note">No comments yet. Be the first.</p>}
+
+            {visible.map((c) => (
+              <div className={`comment status-${c.status}`} key={c.id}>
+                <div className="comment-meta">
+                  <span className="comment-who">{c.mine ? "You" : "Student"}</span>
+                  {c.status !== "approved" && <span className={`cstatus ${c.status}`}>{c.status}</span>}
+                </div>
+                <p className="comment-body">{c.body}</p>
+                {isStaff && c.status === "pending" && (
+                  <div className="mod-actions">
+                    <button className="mod-approve" onClick={() => moderate(c.id, "approved")}>
+                      Approve
+                    </button>
+                    <button className="mod-reject" onClick={() => moderate(c.id, "rejected")}>
+                      Reject
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </section>

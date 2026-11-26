@@ -104,6 +104,19 @@ below, then moving on.
 audiences, where the only differences between them are **tenant config + feature
 flags + RLS scoping** — same codebase, same feed.
 
+> **build-2 status (2026-11-26).** Tenant model is now real: `membership`
+> (user+tenant+role), roles (`student/teacher/author/tenant_admin`), and
+> tenant-scoped RLS via `is_member/is_staff` helpers. The app is now
+> **dashboard-first** — a home screen with stats, assignments, followed topics
+> (+search) and playlists; the swipe feed is one *session* opened from it over a
+> `FeedSource` (all/topic/random/playlist/assignment), with history-based
+> dashboard→swipe→detail back navigation. Seeded personas (teacher + 2 students
+> at "Lincoln High") drive a **persona switcher**. Teacher-moderated **comments**
+> are live (post → pending → teacher approve/reject → visible), and **DOMPurify**
+> guards every HTML render. Still deferred: `tenant_config` feature flags,
+> teacher *authoring* UI, spaced-repetition / "due today", teacher dashboards.
+> See `migrations/0004_tenant_model.sql` + `seed/0004_personas_demo.sql`.
+
 ### The three audiences
 
 | Archetype | Who | Content | Flags that define it |
