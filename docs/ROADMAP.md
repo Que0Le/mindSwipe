@@ -321,7 +321,10 @@ select
         100.0 * count(*) filter (
             where public.selected_is_correct(a.selected, p.answer -> 'correct')
         ) / nullif(count(*), 0)
-    )                                               as correct_rate   -- "% green"
+    )                                               as correct_rate,  -- "% green"
+    percentile_cont(0.5) within group (
+        order by a.duration_ms
+    ) filter (where a.duration_ms is not null)      as median_ms      -- time-to-answer
 from public.playlist_item pi
 join public.attempt a on a.post_id = pi.post_id
 join public.post p     on p.id      = pi.post_id
@@ -330,8 +333,16 @@ group by pi.playlist_id, pi.post_id, pi.position;
 -- partitions this per context — a viewer only counts attempts they may read.
 ```
 
+- **Two metrics, not one:** `correct_rate` (difficulty) + `median_ms`
+  (time-to-answer) disambiguate each other — high-correct/slow (tricky but good)
+  is not high-correct/fast (too easy); low-correct/slow (too hard) is not
+  low-correct/fast (guessing/unclear). Use the **median** (time is noisy).
 - **Reading it:** each row is one card's % correct across everyone the caller is
   entitled to see. "Many green" = high `correct_rate` ⇒ too easy; low ⇒ too hard.
+- **Prerequisite — capture time client-side:** `attempt.duration_ms` exists but
+  the client never sends it (`recordAttempt` is called without a duration). The
+  Card must time from first-view (or first interaction) to submit and pass it
+  through. Small change; without it `median_ms` is null.
 - **Playlist-level profile** (for the "too easy / too hard" verdict): bucket the
   cards by `correct_rate` — e.g. easy ≥ 85, hard ≤ 40 — and classify the set
   (mostly-easy / balanced / mostly-hard). A thin rollup view or client-side.
