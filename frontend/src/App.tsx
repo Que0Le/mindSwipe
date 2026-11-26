@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Post } from "./types";
-import { getTopics, getUserState, recordAttempt, recordView, setReaction } from "./api";
+import {
+  clearUserActivity,
+  getTopics,
+  getUserState,
+  recordAttempt,
+  recordView,
+  setReaction,
+} from "./api";
 import { ensureAuth } from "./supabase";
 import {
   KEYS,
@@ -18,6 +25,9 @@ export default function App() {
   const [topic, setTopic] = useState<string | null>(null);
   const [topics, setTopics] = useState<{ topic: string; count: number }[]>([]);
   const [openPost, setOpenPost] = useState<Post | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Bumped by "Clear all" to tell cards to drop any pending (pre-submit) pick.
+  const [resetToken, setResetToken] = useState(0);
 
   // localStorage gives instant, offline-safe UI; Supabase is the durable store.
   const [likes, setLikes] = useState<BoolMap>(() => loadLikes());
@@ -109,15 +119,34 @@ export default function App() {
     });
   }
 
-  function recordAnswer(id: number, choiceId: string) {
-    if (answers[id]) return; // already answered (Card also disables after the first pick)
+  // Wipe this user's choices/results — locally and on the server — so the feed
+  // resets to unanswered (and stays reset after a reload).
+  async function clearAll() {
+    setMenuOpen(false);
+    setAnswers({});
+    save(KEYS.answers, {});
+    setLikes({});
+    save(KEYS.likes, {});
+    setSaves({});
+    save(KEYS.saves, {});
+    viewed.current = new Set();
+    setResetToken((t) => t + 1);
+    try {
+      await clearUserActivity();
+    } catch {
+      /* best-effort — local state is already cleared */
+    }
+  }
+
+  function recordAnswer(id: number, choiceIds: string[]) {
+    if (answers[id]) return; // already answered (Card also disables after submit)
     setAnswers((prev) => {
       if (prev[id]) return prev;
-      const next = { ...prev, [id]: choiceId };
+      const next = { ...prev, [id]: choiceIds };
       save(KEYS.answers, next);
       return next;
     });
-    void recordAttempt(id, [choiceId]);
+    void recordAttempt(id, choiceIds);
   }
 
   return (
@@ -139,6 +168,28 @@ export default function App() {
               </option>
             ))}
           </select>
+
+          <div className="menu">
+            <button
+              className="menu-btn"
+              aria-label="More options"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <>
+                <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
+                <div className="menu-pop" role="menu">
+                  <button role="menuitem" className="menu-item" onClick={clearAll}>
+                    Clear all
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -153,6 +204,7 @@ export default function App() {
         onOpen={openDetail}
         initialId={initialId}
         onActiveChange={onActiveChange}
+        resetToken={resetToken}
       />
 
       {openPost && <Detail post={openPost} onClose={closeDetail} />}

@@ -7,16 +7,18 @@ interface Props {
   topic: string | null;
   likes: Record<number, boolean>;
   saves: Record<number, boolean>;
-  answers: Record<number, string>;
+  answers: Record<number, string[]>;
   onToggleLike: (id: number) => void;
   onToggleSave: (id: number) => void;
-  onAnswer: (id: number, choiceId: string) => void;
+  onAnswer: (id: number, choiceIds: string[]) => void;
   onOpen: (post: Post) => void;
   // Deep-link: start the feed at this post id (first mount only). Forward-only,
   // so there's nothing above it to scroll up to — scrolling down continues.
   initialId?: number | null;
   // Fires when the snapped card changes, with its id (null when empty).
   onActiveChange?: (id: number | null) => void;
+  // Bumped to tell cards to drop any pending (pre-submit) selection.
+  resetToken?: number;
 }
 
 const BATCH = 8;
@@ -38,9 +40,9 @@ export default function Feed({
   onOpen,
   initialId,
   onActiveChange,
+  resetToken,
 }: Props) {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [, setCursor] = useState<number>(0);
   const [hasMore, setHasMore] = useState(true);
   const [active, setActive] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -61,10 +63,7 @@ export default function Feed({
         const seen = new Set(prev.map((p) => p.id));
         return [...prev, ...page.items.filter((p) => !seen.has(p.id))];
       });
-      if (page.nextCursor != null) {
-        cursorRef.current = page.nextCursor;
-        setCursor(page.nextCursor);
-      }
+      if (page.nextCursor != null) cursorRef.current = page.nextCursor;
       hasMoreRef.current = page.hasMore;
       setHasMore(page.hasMore);
     } finally {
@@ -82,7 +81,6 @@ export default function Feed({
     setPosts([]);
     setActive(0);
     cursorRef.current = start;
-    setCursor(start);
     hasMoreRef.current = true;
     setHasMore(true);
     scrollerRef.current?.scrollTo({ top: 0 });
@@ -136,6 +134,7 @@ export default function Feed({
                 onToggleSave={onToggleSave}
                 onAnswer={onAnswer}
                 onOpen={onOpen}
+                resetToken={resetToken}
               />
             ) : (
               <div className="slot-placeholder" aria-hidden="true" />

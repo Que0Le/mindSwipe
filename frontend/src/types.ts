@@ -39,18 +39,3 @@ export interface FeedPage {
   nextCursor: number | null;
   hasMore: boolean;
 }
-
-export interface OfflineInfo {
-  generatedAt: string;
-  // Full cards currently readable offline (stubs excluded).
-  count: number;
-  // Cards trimmed to id-only stubs by the size cap (re-fetched online).
-  stubCount?: number;
-  // Approximate bytes used by the full cards.
-  bytes?: number;
-  topic: string | null;
-  // Keyset position: the highest post id saved so far. The next "Prepare
-  // offline" click fetches the batch after this.
-  cursor: number;
-  hasMore: boolean;
-}

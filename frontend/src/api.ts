@@ -159,10 +159,20 @@ export async function getUserState(): Promise<{ likes: BoolMap; answers: AnswerM
   ]);
   for (const r of (reacts.data ?? []) as { post_id: number }[]) likes[r.post_id] = true;
   for (const a of (atts.data ?? []) as { post_id: number; selected: string[] }[]) {
-    const first = Array.isArray(a.selected) ? a.selected[0] : undefined;
-    if (first) answers[a.post_id] = first;
+    if (Array.isArray(a.selected) && a.selected.length) answers[a.post_id] = a.selected;
   }
   return { likes, answers };
+}
+
+/** Delete this user's attempts + reactions (RLS scopes it to their own rows). */
+export async function clearUserActivity(): Promise<void> {
+  await ensureAuth();
+  // PostgREST requires a filter on delete; `id >= 0` matches all of the caller's
+  // rows (RLS already restricts the set to auth.uid()).
+  const att = await supabase.from("attempt").delete().gte("id", 0);
+  if (att.error) console.warn("clear attempts failed:", att.error.message);
+  const rea = await supabase.from("reaction").delete().gte("id", 0);
+  if (rea.error) console.warn("clear reactions failed:", rea.error.message);
 }
 
 export type { Post };

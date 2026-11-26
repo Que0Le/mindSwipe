@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Post } from "../types";
 
 const DIFFICULTY = ["", "Beginner", "Easy", "Medium", "Hard", "Expert"];
@@ -8,11 +8,12 @@ interface Props {
   active: boolean;
   liked: boolean;
   saved: boolean;
-  answer?: string;
+  answer?: string[];
   onToggleLike: (id: number) => void;
   onToggleSave: (id: number) => void;
-  onAnswer: (id: number, choiceId: string) => void;
+  onAnswer: (id: number, choiceIds: string[]) => void;
   onOpen: (post: Post) => void;
+  resetToken?: number;
 }
 
 export default function Card({
@@ -24,25 +25,45 @@ export default function Card({
   onToggleSave,
   onAnswer,
   onOpen,
+  resetToken,
 }: Props) {
-  const [revealed, setRevealed] = useState(Boolean(answer));
   const isMcq = post.questionType === "mcq" && post.choices.length > 0;
-  const answered = Boolean(answer);
+  const answered = answer !== undefined;
   const correctSet = new Set(post.answer.correct);
+
+  // Free multi-select: the student may pick any number of choices. The client
+  // never caps or enforces a count — grading alone decides correctness.
+  const [selected, setSelected] = useState<string[]>([]);
+  const picks = answered ? answer ?? [] : selected;
+  const pickedSet = new Set(picks);
+
+  // "Clear all" drops any pending (pre-submit) pick on every card.
+  useEffect(() => {
+    if (resetToken) setSelected([]);
+  }, [resetToken]);
 
   function choose(choiceId: string) {
     if (answered) return;
-    onAnswer(post.id, choiceId);
-    setRevealed(true);
+    setSelected((prev) =>
+      prev.includes(choiceId) ? prev.filter((id) => id !== choiceId) : [...prev, choiceId]
+    );
+  }
+
+  function submit() {
+    if (answered || selected.length === 0) return;
+    onAnswer(post.id, selected);
   }
 
   function choiceState(choiceId: string): string {
-    if (!revealed && !answered) return "";
+    if (!answered) return pickedSet.has(choiceId) ? "picked" : "";
     if (correctSet.has(choiceId)) return "correct";
-    if (choiceId === answer) return "wrong";
+    if (pickedSet.has(choiceId)) return "wrong";
     return "dim";
   }
 
+  // Correct only when the chosen set exactly matches the correct set.
+  const isCorrect =
+    answered && picks.length === correctSet.size && picks.every((id) => correctSet.has(id));
   const likeCount = post.likeCount + (liked ? 1 : 0);
 
   return (
@@ -62,24 +83,44 @@ export default function Card({
         <div className="post-html" dangerouslySetInnerHTML={{ __html: post.bodyHtml }} />
 
         {isMcq && (
-          <div className="choices">
-            {post.choices.map((c) => (
-              <button
-                key={c.id}
-                className={`choice ${choiceState(c.id)}`}
-                onClick={() => choose(c.id)}
-                disabled={answered}
-              >
-                <span className="choice-key">{c.id.toUpperCase()}</span>
-                <span className="choice-text">{c.text}</span>
-                {revealed && correctSet.has(c.id) && <i className="mark">correct</i>}
-              </button>
-            ))}
-          </div>
+          <>
+            <p className="choices-hint">Choose one or more</p>
+            <div className="choices multi" role="group">
+              {post.choices.map((c) => (
+                <button
+                  key={c.id}
+                  className={`choice ${choiceState(c.id)}`}
+                  onClick={() => choose(c.id)}
+                  disabled={answered}
+                  role="checkbox"
+                  aria-checked={pickedSet.has(c.id)}
+                >
+                  <span className="choice-key">{c.id.toUpperCase()}</span>
+                  <span className="choice-text">{c.text}</span>
+                  <i className="mark" aria-hidden="true">
+                    {answered ? (correctSet.has(c.id) ? "✓" : pickedSet.has(c.id) ? "✗" : "") : ""}
+                  </i>
+                </button>
+              ))}
+            </div>
+
+            {/* Submit turns into the verdict in the SAME slot, so revealing the
+                result never moves anything above or below it. */}
+            <button
+              type="button"
+              className={`submit-btn ${answered ? (isCorrect ? "is-correct" : "is-wrong") : ""}`}
+              onClick={submit}
+              disabled={answered || selected.length === 0}
+            >
+              {answered ? (isCorrect ? "Correct ✓" : "Not quite ✗") : "Submit answer"}
+            </button>
+          </>
         )}
 
-        {revealed && post.answer.explanation && (
-          <p className="explanation">{post.answer.explanation}</p>
+        {/* Always rendered so its space is reserved up front; it only fades in
+            on evaluation — no layout shift. */}
+        {post.answer.explanation && (
+          <p className={`explanation ${answered ? "show" : ""}`}>{post.answer.explanation}</p>
         )}
 
         <button className="more-link" onClick={() => onOpen(post)}>

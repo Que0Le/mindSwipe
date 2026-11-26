@@ -3,7 +3,9 @@
 // a sync endpoint later is additive - no reshaping required.
 
 export type BoolMap = Record<number, boolean>;
-export type AnswerMap = Record<number, string>;
+// The choice id(s) a student submitted for a post (one for single-answer MCQs,
+// several for "select all that apply").
+export type AnswerMap = Record<number, string[]>;
 
 function load<T>(key: string, fallback: T): T {
   try {
