@@ -1,11 +1,13 @@
 import type {
   Assignment,
+  ClassMember,
   Comment,
   FeedPage,
   FeedSource,
   ModerationStatus,
   Playlist,
   Post,
+  Role,
   Stats,
   TopicMastery,
 } from "./types";
@@ -259,6 +261,30 @@ export async function getAssignments(): Promise<Assignment[]> {
     assignee: r.assignee,
     dueAt: r.due_at,
     progress: progMap.get(r.id) ?? { total: 0, attempted: 0, correct: 0 },
+  }));
+}
+
+/** Class roster + per-student progress (RLS: staff see their tenant's students). */
+export async function getClassRoster(tenantId: number): Promise<ClassMember[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("class_roster")
+    .select("user_id,display_name,role,answered,correct")
+    .eq("tenant_id", tenantId)
+    .order("display_name");
+  if (error) return [];
+  return ((data ?? []) as {
+    user_id: string;
+    display_name: string | null;
+    role: Role;
+    answered: number;
+    correct: number;
+  }[]).map((r) => ({
+    userId: r.user_id,
+    displayName: r.display_name,
+    role: r.role,
+    answered: r.answered,
+    correct: r.correct,
   }));
 }
 

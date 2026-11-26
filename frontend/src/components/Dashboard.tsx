@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Assignment, FeedSource, Identity, Playlist, Stats, TopicMastery } from "../types";
+import type { Assignment, ClassMember, FeedSource, Identity, Playlist, Stats, TopicMastery } from "../types";
 import {
   addTopicInterest,
   getAssignments,
+  getClassRoster,
   getPlaylists,
   getStats,
   getTopicInterests,
@@ -39,11 +40,19 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ topic: string; count: number }[]>([]);
-  // A flag-gated teaching tool opened from the dashboard (stub surfaces for now).
+  // A flag-gated teaching tool opened from the dashboard.
   const [tool, setTool] = useState<"authoring" | "monitoring" | null>(null);
+  const [roster, setRoster] = useState<ClassMember[]>([]);
 
   const flags = identity.flags;
   const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
+
+  // Load the class roster when the teacher opens the monitoring dashboard.
+  useEffect(() => {
+    if (tool === "monitoring" && identity.tenantId != null) {
+      getClassRoster(identity.tenantId).then(setRoster);
+    }
+  }, [tool, identity.tenantId]);
 
   const masteryMap = useMemo(() => {
     const m = new Map<string, TopicMastery>();
@@ -276,9 +285,32 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
               <>
                 <h2>Class dashboard</h2>
                 <p className="tool-note">
-                  Enabled for {identity.displayName}’s school ({identity.plan} plan). Live class
-                  progress and engagement will appear here.
+                  {identity.displayName}’s class · {identity.plan} plan
                 </p>
+                <div className="roster">
+                  <div className="roster-head">
+                    <span>Student</span>
+                    <span>Answered</span>
+                    <span>Correct</span>
+                  </div>
+                  {roster
+                    .filter((m) => m.role === "student")
+                    .map((m) => {
+                      const acc = m.answered ? Math.round((m.correct / m.answered) * 100) : 0;
+                      return (
+                        <div className="roster-row" key={m.userId}>
+                          <span className="roster-name">{m.displayName ?? "Student"}</span>
+                          <span>{m.answered}</span>
+                          <span>
+                            {m.correct} <small>({acc}%)</small>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  {roster.filter((m) => m.role === "student").length === 0 && (
+                    <p className="tool-note">No students in this class yet.</p>
+                  )}
+                </div>
               </>
             ) : (
               <>

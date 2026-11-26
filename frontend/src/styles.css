@@ -1227,3 +1227,39 @@ body {
   line-height: 1.55;
   margin: 0;
 }
+.roster {
+  margin-top: 12px;
+}
+.roster-head,
+.roster-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 9px 4px;
+}
+.roster-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.roster-head span:not(:first-child),
+.roster-row span:not(:first-child) {
+  text-align: right;
+  min-width: 68px;
+}
+.roster-row {
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.roster-row:last-child {
+  border-bottom: none;
+}
+.roster-name {
+  font-weight: 600;
+}
+.roster-row small {
+  color: var(--muted);
+}

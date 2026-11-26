@@ -97,6 +97,14 @@ export interface Assignment {
   progress: { total: number; attempted: number; correct: number };
 }
 
+export interface ClassMember {
+  userId: string;
+  displayName: string | null;
+  role: Role;
+  answered: number;
+  correct: number;
+}
+
 // A swipe session always runs over one of these sources.
 export type FeedSource =
   | { type: "all" }
