@@ -65,13 +65,44 @@ function mapPost(r: DbPost): Post {
   };
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+interface DbPlaylistRow {
+  id: number;
+  slug: string;
+  title: string;
+  description: string | null;
+  playlist_item: { count: number }[];
+}
+
+interface DbAssignmentRow {
+  id: number;
+  title: string;
+  description: string | null;
+  source_type: "playlist" | "topic";
+  playlist_id: number | null;
+  topic: string | null;
+  assignee: string | null;
+  due_at: string | null;
+}
+
+interface DbCommentRow {
+  id: number;
+  post_id: number;
+  body: string;
+  status: ModerationStatus;
+  user_id: string;
+  created_at: string;
+}
+
+function mapComment(r: DbCommentRow, myId: string): Comment {
+  return {
+    id: r.id,
+    postId: r.post_id,
+    body: r.body,
+    status: r.status,
+    mine: r.user_id === myId,
+    authorName: null,
+    createdAt: r.created_at,
+  };
 }
 
 interface FeedParams {
@@ -101,12 +132,14 @@ export async function getFeed({ source, cursor = 0, limit = 8 }: FeedParams): Pr
   }
 
   if (source.type === "assignment") {
-    const ids = await supabase
+    // assignment_post is a view (no FK), so PostgREST can't embed the post here;
+    // fetch the ids, then the cards. Both sets are small (one assignment).
+    const { data: idRows, error: idErr } = await supabase
       .from("assignment_post")
       .select("post_id")
       .eq("assignment_id", source.assignmentId);
-    if (ids.error) throw ids.error;
-    const postIds = (ids.data ?? []).map((r) => (r as { post_id: number }).post_id);
+    if (idErr) throw idErr;
+    const postIds = ((idRows ?? []) as { post_id: number }[]).map((r) => r.post_id);
     if (postIds.length === 0) return { items: [], nextCursor: null, hasMore: false };
     const { data, error } = await supabase
       .from("post")
@@ -136,8 +169,7 @@ export async function getFeed({ source, cursor = 0, limit = 8 }: FeedParams): Pr
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor = page.length ? page[page.length - 1].id : null;
-  const items = page.map(mapPost);
-  return { items: source.type === "random" ? shuffle(items) : items, nextCursor, hasMore };
+  return { items: page.map(mapPost), nextCursor, hasMore };
 }
 
 /** A single card (deep-link / refresh). */
@@ -195,13 +227,7 @@ export async function getPlaylists(): Promise<Playlist[]> {
     .select("id,slug,title,description,playlist_item(count)")
     .order("id", { ascending: true });
   if (error) return [];
-  return ((data ?? []) as unknown as {
-    id: number;
-    slug: string;
-    title: string;
-    description: string | null;
-    playlist_item: { count: number }[];
-  }[]).map((r) => ({
+  return ((data ?? []) as unknown as DbPlaylistRow[]).map((r) => ({
     id: r.id,
     slug: r.slug,
     title: r.title,
@@ -223,16 +249,7 @@ export async function getAssignments(): Promise<Assignment[]> {
   for (const p of (prog ?? []) as { assignment_id: number; total: number; attempted: number; correct: number }[]) {
     progMap.set(p.assignment_id, { total: p.total, attempted: p.attempted, correct: p.correct });
   }
-  return ((rows ?? []) as unknown as {
-    id: number;
-    title: string;
-    description: string | null;
-    source_type: "playlist" | "topic";
-    playlist_id: number | null;
-    topic: string | null;
-    assignee: string | null;
-    due_at: string | null;
-  }[]).map((r) => ({
+  return ((rows ?? []) as unknown as DbAssignmentRow[]).map((r) => ({
     id: r.id,
     title: r.title,
     description: r.description,
@@ -249,32 +266,19 @@ export async function getAssignments(): Promise<Assignment[]> {
 
 export async function getComments(postId: number): Promise<Comment[]> {
   await ensureAuth();
+  // The session is already cached locally — read the id from it rather than
+  // hitting /auth/v1/user, so a Detail open is a single round trip.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const myId = user?.id ?? "";
+    data: { session },
+  } = await supabase.auth.getSession();
+  const myId = session?.user?.id ?? "";
   const { data, error } = await supabase
     .from("comment")
     .select("id,post_id,body,status,user_id,created_at")
     .eq("post_id", postId)
     .order("created_at", { ascending: true });
   if (error) return [];
-  return ((data ?? []) as {
-    id: number;
-    post_id: number;
-    body: string;
-    status: ModerationStatus;
-    user_id: string;
-    created_at: string;
-  }[]).map((r) => ({
-    id: r.id,
-    postId: r.post_id,
-    body: r.body,
-    status: r.status,
-    mine: r.user_id === myId,
-    authorName: null,
-    createdAt: r.created_at,
-  }));
+  return ((data ?? []) as DbCommentRow[]).map((r) => mapComment(r, myId));
 }
 
 /** Post a comment. It lands as 'pending' — RLS forbids any other status on insert. */
@@ -289,15 +293,7 @@ export async function postComment(postId: number, tenantId: number, body: string
     console.warn("postComment:", error.message);
     return null;
   }
-  return {
-    id: data.id,
-    postId: data.post_id,
-    body: data.body,
-    status: data.status,
-    mine: true,
-    authorName: null,
-    createdAt: data.created_at,
-  };
+  return mapComment(data as DbCommentRow, data.user_id);
 }
 
 /** Teacher/staff moderation (RLS restricts the UPDATE to staff of the tenant). */

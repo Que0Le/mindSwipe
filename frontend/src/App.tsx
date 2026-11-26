@@ -9,7 +9,16 @@ import {
   setReaction,
 } from "./api";
 import { ensureAuth, getIdentity, signInAs, type Persona } from "./auth";
-import { KEYS, loadAnswers, loadLikes, loadSaves, save, type AnswerMap, type BoolMap } from "./localState";
+import {
+  loadAnswers,
+  loadLikes,
+  loadSaves,
+  saveAnswers,
+  saveLikes,
+  saveSaves,
+  type AnswerMap,
+  type BoolMap,
+} from "./localState";
 import Dashboard from "./components/Dashboard";
 import Feed from "./components/Feed";
 import Detail from "./components/Detail";
@@ -68,12 +77,11 @@ export default function App() {
   // browser/OS back button unwinds exactly one step at a time.
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
-      const ms = (e.state as { ms?: string; id?: number } | null)?.ms;
-      if (ms === "detail") {
-        const id = (e.state as { id?: number }).id;
-        if (id) getPost(id).then((p) => p && setOpenPost(p));
+      const st = e.state as { ms?: string; id?: number } | null;
+      if (st?.ms === "detail") {
+        if (st.id) getPost(st.id).then((p) => p && setOpenPost(p));
         setView("swipe");
-      } else if (ms === "swipe") {
+      } else if (st?.ms === "swipe") {
         setOpenPost(null);
         setView("swipe");
       } else {
@@ -115,13 +123,8 @@ export default function App() {
   }, []);
 
   async function switchPersona(p: Persona) {
-    try {
-      localStorage.removeItem(KEYS.likes);
-      localStorage.removeItem(KEYS.saves);
-      localStorage.removeItem(KEYS.answers);
-    } catch {
-      /* ignore */
-    }
+    // Each persona has its own namespaced localStorage, so no wipe is needed —
+    // the reload re-hydrates from the new persona's cache + the server.
     try {
       await signInAs(p);
     } catch {
@@ -136,7 +139,7 @@ export default function App() {
       const next = { ...prev };
       if (nextLiked) next[id] = true;
       else delete next[id];
-      save(KEYS.likes, next);
+      saveLikes(next);
       return next;
     });
     void setReaction(id, "like", nextLiked);
@@ -146,7 +149,7 @@ export default function App() {
     setSaves((prev) => {
       const next = { ...prev, [id]: !prev[id] };
       if (!next[id]) delete next[id];
-      save(KEYS.saves, next);
+      saveSaves(next);
       return next;
     });
   }
@@ -154,11 +157,11 @@ export default function App() {
   async function clearAll() {
     setMenuOpen(false);
     setAnswers({});
-    save(KEYS.answers, {});
+    saveAnswers({});
     setLikes({});
-    save(KEYS.likes, {});
+    saveLikes({});
     setSaves({});
-    save(KEYS.saves, {});
+    saveSaves({});
     viewed.current = new Set();
     setResetToken((t) => t + 1);
     try {
@@ -173,7 +176,7 @@ export default function App() {
     setAnswers((prev) => {
       if (prev[id]) return prev;
       const next = { ...prev, [id]: choiceIds };
-      save(KEYS.answers, next);
+      saveAnswers(next);
       return next;
     });
     void recordAttempt(id, choiceIds);

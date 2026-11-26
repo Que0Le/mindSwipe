@@ -1,5 +1,8 @@
 import { supabase } from "./supabase";
+import { currentPersonaKey, rememberPersona } from "./localState";
 import type { Identity, Role } from "./types";
+
+export { currentPersonaKey } from "./localState";
 
 // Build-2 demo auth: the Public persona is an anonymous sign-in (build-1's
 // model); the School personas are seeded email/password accounts so roles,
@@ -42,24 +45,6 @@ export const PERSONAS: Persona[] = [
     password: "demo1234",
   },
 ];
-
-const PERSONA_KEY = "ms_persona";
-
-export function currentPersonaKey(): string {
-  try {
-    return localStorage.getItem(PERSONA_KEY) ?? "public";
-  } catch {
-    return "public";
-  }
-}
-
-function rememberPersona(key: string): void {
-  try {
-    localStorage.setItem(PERSONA_KEY, key);
-  } catch {
-    /* private mode — session still works for this tab */
-  }
-}
 
 /** Switch personas: drop the current session, sign in as the new one. The caller
  *  reloads afterwards so all per-user state re-hydrates cleanly. */

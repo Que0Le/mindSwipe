@@ -1,6 +1,7 @@
-// Per-viewer state (likes, bookmarks, answers) lives in localStorage for now.
-// It is shaped as plain maps keyed by post id so that attaching a real user +
-// a sync endpoint later is additive - no reshaping required.
+// Per-viewer state (likes, bookmarks, answers) lives in localStorage for instant,
+// offline-safe UI; Supabase is the durable store. Keys are namespaced by the
+// active persona so switching identity never bleeds one user's cache into
+// another's (and switching back preserves it) — no wipe needed.
 
 export type BoolMap = Record<number, boolean>;
 // The choice id(s) a student submitted for a post (one for single-answer MCQs,
@@ -25,17 +26,51 @@ export function save<T>(key: string, value: T): void {
 }
 
 export const KEYS = {
+  persona: "ms_persona",
   likes: "ms_likes",
   saves: "ms_saves",
   answers: "ms_answers",
 } as const;
 
+// --- active persona (the storage layer owns the selector key) --------------
+
+export function currentPersonaKey(): string {
+  try {
+    return localStorage.getItem(KEYS.persona) ?? "public";
+  } catch {
+    return "public";
+  }
+}
+
+export function rememberPersona(key: string): void {
+  try {
+    localStorage.setItem(KEYS.persona, key);
+  } catch {
+    /* private mode — session still works for this tab */
+  }
+}
+
+// Per-user caches are suffixed with the active persona.
+function nsKey(base: string): string {
+  return `${base}_${currentPersonaKey()}`;
+}
+
 export function loadLikes(): BoolMap {
-  return load<BoolMap>(KEYS.likes, {});
+  return load<BoolMap>(nsKey(KEYS.likes), {});
 }
 export function loadSaves(): BoolMap {
-  return load<BoolMap>(KEYS.saves, {});
+  return load<BoolMap>(nsKey(KEYS.saves), {});
 }
 export function loadAnswers(): AnswerMap {
-  return load<AnswerMap>(KEYS.answers, {});
+  return load<AnswerMap>(nsKey(KEYS.answers), {});
+}
+
+export function saveLikes(v: BoolMap): void {
+  save(nsKey(KEYS.likes), v);
+}
+export function saveSaves(v: BoolMap): void {
+  save(nsKey(KEYS.saves), v);
+}
+export function saveAnswers(v: AnswerMap): void {
+  save(nsKey(KEYS.answers), v);
 }

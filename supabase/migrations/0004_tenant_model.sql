@@ -269,13 +269,18 @@ create view public.my_post_result with (security_invoker = true) as
     join public.post p on p.id = a.post_id
     order by a.post_id, a.session_seq desc nulls last, a.id desc;
 
--- One-row rollup for the dashboard header.
+-- One-row rollup for the dashboard header. answered + correct come from a single
+-- pass over my_post_result (the distinct-on join), not two.
 create view public.my_stats with (security_invoker = true) as
     select
-        (select count(*) from public.my_post_result)                         as answered,
-        (select count(*) from public.my_post_result where correct)           as correct,
-        (select count(*) from public.reaction  where kind = 'like')          as likes,
-        (select count(distinct post_id) from public.view_event)              as viewed;
+        r.answered,
+        r.correct,
+        (select count(*) from public.reaction  where kind = 'like')     as likes,
+        (select count(distinct post_id) from public.view_event)         as viewed
+    from (
+        select count(*) as answered, count(*) filter (where correct) as correct
+        from public.my_post_result
+    ) r;
 
 -- Per-topic mastery for the "your topics" cards.
 create view public.my_topic_mastery with (security_invoker = true) as
