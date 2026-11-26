@@ -355,6 +355,88 @@ group by pi.playlist_id, pi.post_id, pi.position;
 - **Needs nothing new structurally** — `playlist`, `playlist_item`, `attempt`,
   `post` all exist. This is the highest-value, lowest-risk next slice.
 
+#### Spec — `card_distractors` (why a card is hard, not just that it is)
+
+`correct_rate` says a card is hard; **distractor analysis says why.** We already
+store the chosen choice ids in `attempt.selected`, so per-choice pick-rate is free
+and is the most actionable card metric: a *wrong* choice picked by a large share
+is either a misconception worth teaching or an ambiguous question worth fixing.
+
+```sql
+create view public.card_distractors with (security_invoker = true) as
+with picks as (                              -- how often each choice was chosen
+    select a.post_id, c.id as choice_id, count(*) as picks
+    from public.attempt a
+    cross join lateral jsonb_array_elements_text(a.selected) as c(id)
+    group by a.post_id, c.id
+),
+totals as (                                  -- attempts per card (the denominator)
+    select post_id, count(*) as attempts from public.attempt group by post_id
+)
+select
+    pk.post_id,
+    pk.choice_id,
+    pk.picks,
+    round(100.0 * pk.picks / nullif(t.attempts, 0)) as pick_rate,
+    exists (
+        select 1 from public.post p
+        where p.id = pk.post_id
+          and pk.choice_id in (select jsonb_array_elements_text(p.answer -> 'correct'))
+    ) as is_correct
+from picks pk
+join totals t on t.post_id = pk.post_id;
+-- grant select to authenticated; attempt RLS (security_invoker) partitions it by
+-- context exactly like playlist_difficulty — a publisher never sees another
+-- circle's distractor pattern.
+```
+
+- **Reading it:** a row with `is_correct = false` and a high `pick_rate` is a
+  **trap** — teach the misconception, or repair the question. Choices never
+  picked are simply absent (left-join `post.choices` if you want to show 0%).
+- Same privacy guarantee as difficulty: it is aggregate **and** RLS-scoped, so no
+  cross-context leak.
+
+#### Spec — `student_effort` (effort × outcome, the roster/intervention axis)
+
+This is the **named-student** mirror of the content metrics, and it rides the
+roster gate (see "who sees named students", decision (a) vs (b) still open). A
+single accuracy number hides the two students intervention cares about most;
+pairing accuracy with **time** separates them:
+
+- low accuracy + **high** time → *struggling hard* → needs help.
+- low accuracy + **low** time → *not really trying* → needs motivation.
+- high accuracy → on track / ahead.
+
+```sql
+create view public.student_effort with (security_invoker = true) as
+select
+    a.user_id,
+    a.tenant_id                                     as context,
+    count(distinct a.post_id)                       as answered,
+    round(
+        100.0 * count(*) filter (
+            where public.selected_is_correct(a.selected, p.answer -> 'correct')
+        ) / nullif(count(*), 0)
+    )                                               as accuracy,
+    percentile_cont(0.5) within group (
+        order by a.duration_ms
+    ) filter (where a.duration_ms is not null)      as median_ms
+from public.attempt a
+join public.post p on p.id = a.post_id
+group by a.user_id, a.tenant_id;
+```
+
+- **Quadrant** = classify each student from `accuracy` and `median_ms` **relative
+  to the cohort** (thresholds must be course-relative — subjects differ in
+  baseline time/difficulty — not absolute). Do the bucketing client-side or in a
+  thin rollup; keep the view raw.
+- **Gate:** per-student PII → only course staff (lead/assistant) see named rows,
+  scoped by attempt RLS to their own context. Needs the same `duration_ms`
+  client-capture prerequisite as `median_ms` above. Unlike the content axis, this
+  one depends on the groups/roster model (to know enrollment + who is staff).
+- Feeds the intervention flow: filter roster to `struggling` / `ahead` → per
+  student page → optionally publish a segment-targeted playlist.
+
 ### Tech details
 
 - **Why Supabase, not a forum/LMS engine:** Discourse/Moodle have no in-app
