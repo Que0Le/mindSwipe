@@ -262,3 +262,14 @@ Deliver the original vision and prepare for going international.
 - [ ] i18n readiness (content is topic-scoped; UI strings are not yet externalized)
 - [ ] Privacy / data policy once accounts exist (ties to per-tenant analytics
       flags and data residency)
+- [ ] **Opaque public id for cards (deep-link URLs).** build-2 added
+      YouTube-Shorts-style deep links (`/?id=N`) using the real `post.id`. That is
+      safe by design — access is gated by RLS (`approved` + tenant), never by id
+      secrecy — but the sequential integer PK is **enumerable**: anyone can walk
+      `?id=1,2,3…` and scrape the whole public library, and the raw PK leaks row
+      counts / DB internals. Low-stakes while content is deliberately public;
+      becomes real once there is paywalled, tenant-private, or draft content whose
+      *existence/volume* shouldn't be guessable. Fix (additive, no RLS change): a
+      `post.public_id` slug/hashid (e.g. base62 or a random token) decoupled from
+      the PK; route `/c/<public_id>` and look cards up by it; keep the integer PK
+      internal. Do it before the first public launch with non-public content.
