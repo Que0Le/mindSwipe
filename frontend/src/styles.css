@@ -1543,6 +1543,21 @@ body {
   white-space: nowrap;
 }
 
+.lens-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.lens-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
 .student-search {
   width: 100%;
   background: var(--surface);

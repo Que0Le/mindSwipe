@@ -375,6 +375,38 @@ export async function getStudentEffort(tenantId: number): Promise<StudentEffort[
   }));
 }
 
+/** Subjects the current teacher teaches (for the dashboard's subject lens). */
+export async function getTeacherSubjects(): Promise<string[]> {
+  await ensureAuth();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const uid = session?.user?.id;
+  if (!uid) return [];
+  const { data } = await supabase.from("group_member").select("subject").eq("user_id", uid).not("subject", "is", null);
+  const set = new Set<string>();
+  for (const r of (data ?? []) as { subject: string | null }[]) if (r.subject) set.add(r.subject);
+  return [...set].sort();
+}
+
+/** Per-student effort for one subject (client left-merges onto the full roster). */
+export async function getStudentSubjectEffort(
+  tenantId: number,
+  subject: string
+): Promise<Record<string, { answered: number; accuracy: number | null; medianMs: number | null }>> {
+  await ensureAuth();
+  const { data } = await supabase
+    .from("student_subject_effort")
+    .select("user_id,answered,accuracy,median_ms")
+    .eq("tenant_id", tenantId)
+    .eq("subject", subject);
+  const map: Record<string, { answered: number; accuracy: number | null; medianMs: number | null }> = {};
+  for (const r of (data ?? []) as { user_id: string; answered: number; accuracy: number | null; median_ms: number | null }[]) {
+    map[r.user_id] = { answered: r.answered, accuracy: r.accuracy, medianMs: r.median_ms };
+  }
+  return map;
+}
+
 /** The tenant's classes (learning_group kind='class'). */
 export async function getClasses(tenantId: number): Promise<{ id: number; name: string }[]> {
   await ensureAuth();

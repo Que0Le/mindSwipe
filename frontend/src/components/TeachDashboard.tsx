@@ -7,6 +7,8 @@ import {
   getPlaylists,
   getStudentClasses,
   getStudentEffort,
+  getStudentSubjectEffort,
+  getTeacherSubjects,
 } from "../api";
 import { buildInsights, cohortMedianAnswered, segmentOf } from "../conclusions";
 import PlaylistInsights from "./PlaylistInsights";
@@ -53,6 +55,9 @@ export default function TeachDashboard({ identity, onClose }: Props) {
   const [studentClasses, setStudentClasses] = useState<Record<string, { classId: number; className: string }>>({});
   const [classFilter, setClassFilter] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [lens, setLens] = useState<string>("all"); // "all" subjects, or one subject
+  const [subjectEffort, setSubjectEffort] = useState<Record<string, { answered: number; accuracy: number | null; medianMs: number | null }>>({});
 
   const tenantId = identity.tenantId;
   useEffect(() => {
@@ -62,24 +67,51 @@ export default function TeachDashboard({ identity, onClose }: Props) {
     getPlaylists().then(setPlaylists);
     getClasses(tenantId).then(setClasses);
     getStudentClasses().then(setStudentClasses);
+    getTeacherSubjects().then(setSubjects);
     getPlaylistVerdicts().then((v) =>
       setVerdicts(new Map(v.map((x) => [x.playlistId, { cards: x.cards, verdict: x.verdict }])))
     );
   }, [tenantId]);
 
-  const pupils = useMemo(() => students.filter((s) => s.role === "student"), [students]);
-  const medAns = useMemo(() => cohortMedianAnswered(students), [students]);
+  // Subject lens: reload per-subject effort when a subject is selected.
+  useEffect(() => {
+    if (tenantId == null || lens === "all") return;
+    getStudentSubjectEffort(tenantId, lens).then(setSubjectEffort);
+  }, [tenantId, lens]);
+
+  // Students re-scoped by the lens (a subject teacher sees subject-only numbers).
+  const scopedStudents = useMemo(() => {
+    if (lens === "all") return students;
+    return students.map((s) =>
+      s.role !== "student"
+        ? s
+        : {
+            ...s,
+            answered: subjectEffort[s.userId]?.answered ?? 0,
+            accuracy: subjectEffort[s.userId]?.accuracy ?? null,
+            medianMs: subjectEffort[s.userId]?.medianMs ?? null,
+          }
+    );
+  }, [lens, students, subjectEffort]);
+
+  const scopedTopics = useMemo(() => (lens === "all" ? topics : topics.filter((t) => t.subject === lens)), [lens, topics]);
+
+  const pupils = useMemo(() => scopedStudents.filter((s) => s.role === "student"), [scopedStudents]);
+  const medAns = useMemo(() => cohortMedianAnswered(scopedStudents), [scopedStudents]);
   const playlistVerdicts = useMemo(
     () => playlists.map((p) => ({ title: p.title, verdict: (verdicts.get(p.id)?.verdict ?? "nodata") as "easy" | "hard" | "balanced" | "nodata" })),
     [playlists, verdicts]
   );
-  const insights = useMemo(() => buildInsights(students, topics, playlistVerdicts), [students, topics, playlistVerdicts]);
+  const insights = useMemo(
+    () => buildInsights(scopedStudents, scopedTopics, lens === "all" ? playlistVerdicts : []),
+    [scopedStudents, scopedTopics, playlistVerdicts, lens]
+  );
 
   const withAcc = pupils.filter((s) => s.accuracy != null);
   const avgAcc = withAcc.length ? Math.round(withAcc.reduce((a, s) => a + (s.accuracy ?? 0), 0) / withAcc.length) : 0;
   const segCount = (seg: Segment) => pupils.filter((s) => segmentOf(s, medAns) === seg).length;
 
-  const signalTopics = topics.filter((t) => t.attempts >= 5 && t.accuracy != null);
+  const signalTopics = scopedTopics.filter((t) => t.attempts >= 5 && t.accuracy != null);
   const weakest = [...signalTopics].sort((a, b) => (a.accuracy ?? 0) - (b.accuracy ?? 0)).slice(0, 4);
   const strongest = [...signalTopics].sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0)).slice(0, 4);
 
@@ -115,6 +147,20 @@ export default function TeachDashboard({ identity, onClose }: Props) {
       </nav>
 
       <div className="teach-body">
+        {subjects.length > 0 && (
+          <div className="lens-bar">
+            <span className="lens-label">Viewing as:</span>
+            <button className={`seg-chip ${lens === "all" ? "on" : ""}`} onClick={() => setLens("all")}>
+              Homeroom · all subjects
+            </button>
+            {subjects.map((sub) => (
+              <button key={sub} className={`seg-chip ${lens === sub ? "on" : ""}`} onClick={() => setLens(sub)}>
+                {sub} teacher
+              </button>
+            ))}
+          </div>
+        )}
+
         {tab === "overview" && (
           <>
             <section className="conclusions">
