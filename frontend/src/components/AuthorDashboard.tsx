@@ -7,7 +7,6 @@ import {
   reviewPost,
   updateDraft,
 } from "../api";
-import PlaylistCurator from "./PlaylistCurator";
 import CardStudio from "./CardStudio";
 
 interface Props {
@@ -15,7 +14,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "studio" | "write" | "drafts" | "playlists" | "queue";
+type Tab = "studio" | "write" | "drafts" | "queue";
 
 // Each tab is a real sub-route of /author, so it's linkable, refreshable and
 // unwound by the browser Back button.
@@ -23,7 +22,6 @@ const TAB_PATH: Record<Tab, string> = {
   studio: "/author/studio",
   write: "/author/write",
   drafts: "/author/cards",
-  playlists: "/author/playlists",
   queue: "/author/review",
 };
 function tabFromPath(): Tab {
@@ -32,8 +30,6 @@ function tabFromPath(): Tab {
       return "write";
     case "/author/cards":
       return "drafts";
-    case "/author/playlists":
-      return "playlists";
     case "/author/review":
       return "queue";
     default:
@@ -236,9 +232,6 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
         <button className={tab === "drafts" ? "on" : ""} onClick={() => goTab("drafts")}>
           My cards{drafts.length ? ` (${drafts.length})` : ""}
         </button>
-        <button className={tab === "playlists" ? "on" : ""} onClick={() => goTab("playlists")}>
-          Playlists
-        </button>
         {isStaff && (
           <button className={tab === "queue" ? "on" : ""} onClick={() => goTab("queue")}>
             Review{pendingCount ? ` (${pendingCount})` : ""}
@@ -398,10 +391,6 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
         {/* ---- Studio (explorer · editor · preview) ---- */}
         {tab === "studio" && canAuthor && <CardStudio tenantId={tenantId} />}
 
-        {/* ---- Playlists ---- */}
-        {tab === "playlists" && canAuthor && (
-          <PlaylistCurator tenantId={tenantId} myId={identity.userId} isStaff={isStaff} />
-        )}
 
         {/* ---- Review queue (staff) ---- */}
         {tab === "queue" && isStaff && (

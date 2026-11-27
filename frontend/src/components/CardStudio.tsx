@@ -11,62 +11,37 @@ import {
   updateDraft,
 } from "../api";
 
-// Card studio v2: explorer + MULTIPLE open tabs (each its own editor state,
-// with a dirty dot) + live preview. Low-chrome and dense.
+// Card studio (unified): a playlist rail, a STABLE topic→card explorer, and the
+// editor + preview. Topics are folders, cards are files. Selecting a playlist
+// doesn't restructure the tree — it highlights that playlist's cards green;
+// double-clicking a card's left tag-zone toggles its membership.
 
 interface Props {
   tenantId: number;
 }
 
 const DIFF = ["—", "leicht", "mittel", "schwer"];
+const NO_TOPIC = "(No topic)";
 
 interface EChoice {
   id: string;
   text: string;
 }
-const blank = (): EState => ({
-  editId: null,
-  subject: "",
-  topic: "",
-  difficulty: 1,
-  prompt: "",
-  choices: ["c1", "c2", "c3", "c4"].map((id) => ({ id, text: "" })),
-  correct: [],
-  explanation: "",
-  visibility: "tenant",
-});
+const blankChoices = (): EChoice[] => ["c1", "c2", "c3", "c4"].map((id) => ({ id, text: "" }));
 
-// One open tab's editable contents.
-interface EState {
-  editId: number | null;
-  subject: string;
+function dot(s?: Draft["status"]): string {
+  return s === "approved" ? "●" : s === "rejected" ? "✗" : s === "pending" ? "○" : "·";
+}
+
+interface Row {
+  id: number;
   topic: string;
-  difficulty: number;
   prompt: string;
-  choices: EChoice[];
-  correct: string[];
-  explanation: string;
-  visibility: "tenant" | "public";
+  subject: string;
+  difficulty: number;
+  status?: Draft["status"];
+  mine: boolean;
 }
-
-function fromDraft(d: Draft): EState {
-  return {
-    editId: d.id,
-    subject: d.subject,
-    topic: d.topic,
-    difficulty: d.difficulty || 1,
-    prompt: d.prompt,
-    choices: d.choices.length ? d.choices.map((c) => ({ id: c.id, text: c.text })) : blank().choices,
-    correct: d.correct,
-    explanation: d.explanation,
-    visibility: d.visibility,
-  };
-}
-
-function dot(s: Draft["status"]): string {
-  return s === "approved" ? "●" : s === "rejected" ? "✗" : "○";
-}
-
 interface ViewCard {
   prompt: string;
   subject: string;
@@ -81,21 +56,26 @@ export default function CardStudio({ tenantId }: Props) {
   const [pool, setPool] = useState<PoolCard[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [items, setItems] = useState<Record<number, PlaylistItem[]>>({});
-  const [openPl, setOpenPl] = useState<Set<number>>(new Set());
-  const [myOpen, setMyOpen] = useState(true);
 
-  // tabs: an ordered list of keys, each with current + baseline state
-  const [order, setOrder] = useState<string[]>([]);
-  const [state, setState] = useState<Record<string, EState>>({});
-  const [base, setBase] = useState<Record<string, string>>({}); // key -> JSON baseline
-  const [active, setActive] = useState<string | null>(null);
-  const [viewId, setViewId] = useState<number | null>(null); // non-owned preview
-  const [newSeq, setNewSeq] = useState(1);
+  const [plId, setPlId] = useState<number | null>(null); // selected playlist (null = All cards)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set()); // topics collapsed (open by default)
 
-  const [menu, setMenu] = useState<{ x: number; y: number; cardId: number; plId?: number } | null>(null);
-  const [addPick, setAddPick] = useState(false);
+  // editor (single card)
+  const [sel, setSel] = useState<number | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [subject, setSubject] = useState("");
+  const [topic, setTopic] = useState("");
+  const [difficulty, setDifficulty] = useState(1);
+  const [prompt, setPrompt] = useState("");
+  const [choices, setChoices] = useState<EChoice[]>(blankChoices);
+  const [correct, setCorrect] = useState<string[]>([]);
+  const [explanation, setExplanation] = useState("");
+  const [visibility, setVisibility] = useState<"tenant" | "public">("tenant");
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [menu, setMenu] = useState<{ x: number; y: number; cardId: number } | null>(null);
+  const [addPick, setAddPick] = useState(false);
 
   const mine = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const viewById = useMemo(() => {
@@ -104,6 +84,29 @@ export default function CardStudio({ tenantId }: Props) {
     for (const c of cards) m.set(c.id, c);
     return m;
   }, [pool, cards]);
+
+  // Merge approved pool + my drafts (mine wins), group by topic, sort.
+  const groups = useMemo(() => {
+    const byId = new Map<number, Row>();
+    for (const p of pool)
+      byId.set(p.id, { id: p.id, topic: p.topic || NO_TOPIC, prompt: p.prompt, subject: p.subject, difficulty: p.difficulty, mine: false });
+    for (const c of cards)
+      byId.set(c.id, { id: c.id, topic: c.topic || NO_TOPIC, prompt: c.prompt, subject: c.subject, difficulty: c.difficulty, status: c.status, mine: true });
+    const g = new Map<string, Row[]>();
+    for (const r of byId.values()) {
+      const arr = g.get(r.topic) ?? [];
+      arr.push(r);
+      g.set(r.topic, arr);
+    }
+    return [...g.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([t, rows]) => ({ topic: t, rows: rows.sort((x, y) => x.prompt.localeCompare(y.prompt)) }));
+  }, [pool, cards]);
+
+  const memberIds = useMemo(
+    () => (plId != null ? new Set((items[plId] ?? []).map((it) => it.id)) : new Set<number>()),
+    [plId, items]
+  );
 
   const reloadCards = useCallback(async () => setCards(await getMyDrafts()), []);
   const reloadPlaylists = useCallback(async () => {
@@ -128,274 +131,198 @@ export default function CardStudio({ tenantId }: Props) {
     return () => window.removeEventListener("click", close);
   }, []);
 
-  const cur = active ? state[active] : null;
-  const dirty = (key: string) => base[key] !== JSON.stringify(state[key]);
-
-  function addTab(key: string, s: EState) {
-    setState((m) => ({ ...m, [key]: s }));
-    setBase((m) => ({ ...m, [key]: JSON.stringify(s) }));
-    setOrder((o) => (o.includes(key) ? o : [...o, key]));
-    setActive(key);
-    setViewId(null);
+  function newCard() {
+    setSel(null);
+    setEditId(null);
+    setSubject("");
+    setTopic("");
+    setDifficulty(1);
+    setPrompt("");
+    setChoices(blankChoices());
+    setCorrect([]);
+    setExplanation("");
+    setVisibility("tenant");
     setErr(null);
   }
 
-  function openCard(id: number) {
+  function open(id: number) {
+    setSel(id);
+    setErr(null);
     const c = mine.get(id);
-    if (!c) {
-      setViewId(id); // not mine → preview only
-      setActive(null);
-      return;
+    if (c) {
+      setEditId(c.id);
+      setSubject(c.subject);
+      setTopic(c.topic);
+      setDifficulty(c.difficulty || 1);
+      setPrompt(c.prompt);
+      setChoices(c.choices.length ? c.choices.map((x) => ({ id: x.id, text: x.text })) : blankChoices());
+      setCorrect(c.correct);
+      setExplanation(c.explanation);
+      setVisibility(c.visibility);
+    } else {
+      setEditId(null);
     }
-    const key = `card:${id}`;
-    if (order.includes(key)) {
-      setActive(key);
-      setViewId(null);
-      return;
-    }
-    addTab(key, fromDraft(c));
   }
 
-  function newCard() {
-    const key = `new:${newSeq}`;
-    setNewSeq((n) => n + 1);
-    addTab(key, blank());
-  }
-
-  function closeTab(key: string) {
-    setOrder((o) => {
-      const i = o.indexOf(key);
-      const next = o.filter((k) => k !== key);
-      if (active === key) setActive(next[i] ?? next[i - 1] ?? null);
-      return next;
-    });
-    setState((m) => {
-      const n = { ...m };
-      delete n[key];
-      return n;
-    });
-    setBase((m) => {
-      const n = { ...m };
-      delete n[key];
-      return n;
-    });
-  }
-
-  function patch(p: Partial<EState>) {
-    if (!active) return;
-    setState((m) => ({ ...m, [active]: { ...m[active], ...p } }));
-  }
+  const editable = sel === null || mine.has(sel);
 
   async function save(submit: boolean) {
-    if (!active || !cur) return;
-    const kept = cur.choices.map((c) => ({ id: c.id, text: c.text.trim() })).filter((c) => c.text);
+    const kept = choices.map((c) => ({ id: c.id, text: c.text.trim() })).filter((c) => c.text);
     const keep = new Set(kept.map((c) => c.id));
-    const cor = cur.correct.filter((id) => keep.has(id));
-    if (!cur.prompt.trim()) return setErr("Add a prompt.");
+    const cor = correct.filter((id) => keep.has(id));
+    if (!prompt.trim()) return setErr("Add a prompt.");
     if (kept.length < 2) return setErr("Add at least two choices.");
     if (cor.length < 1) return setErr("Mark a correct choice.");
-    const input: DraftInput = {
-      subject: cur.subject,
-      topic: cur.topic,
-      difficulty: cur.difficulty,
-      prompt: cur.prompt,
-      choices: kept,
-      correct: cor,
-      explanation: cur.explanation,
-      visibility: cur.visibility,
-    };
+    const input: DraftInput = { subject, topic, difficulty, prompt, choices: kept, correct: cor, explanation, visibility };
     setSaving(true);
-    const saved = cur.editId ? await updateDraft(cur.editId, input) : await createDraft(tenantId, input);
+    const saved = editId ? await updateDraft(editId, input) : await createDraft(tenantId, input);
     setSaving(false);
     if (!saved) return setErr("Could not save.");
     setErr(submit ? null : "Saved as draft.");
     await reloadCards();
-    // bind the tab to the saved id and mark it clean
-    const newState: EState = { ...cur, editId: saved.id };
-    const newKey = `card:${saved.id}`;
-    setState((m) => {
-      const n = { ...m };
-      delete n[active];
-      n[newKey] = newState;
-      return n;
-    });
-    setBase((m) => {
-      const n = { ...m };
-      delete n[active];
-      n[newKey] = JSON.stringify(newState);
-      return n;
-    });
-    setOrder((o) => o.map((k) => (k === active ? newKey : k)));
-    setActive(newKey);
+    setEditId(saved.id);
+    setSel(saved.id);
   }
 
-  async function addTo(plId: number, cardId: number) {
-    await addToPlaylist(plId, cardId, items[plId]?.length ?? 0);
+  async function toggleMember(id: number) {
+    if (plId == null) return;
+    if (memberIds.has(id)) await removeFromPlaylist(plId, id);
+    else await addToPlaylist(plId, id, items[plId]?.length ?? 0);
     await reloadPlaylists();
   }
-  async function removeFrom(plId: number, cardId: number) {
-    await removeFromPlaylist(plId, cardId);
+  async function addTo(p: number, id: number) {
+    await addToPlaylist(p, id, items[p]?.length ?? 0);
+    await reloadPlaylists();
+  }
+  async function removeFrom(p: number, id: number) {
+    await removeFromPlaylist(p, id);
     await reloadPlaylists();
   }
 
   const preview: ViewCard | null = useMemo(() => {
-    if (cur)
-      return {
-        prompt: cur.prompt,
-        subject: cur.subject,
-        difficulty: cur.difficulty,
-        choices: cur.choices.filter((c) => c.text.trim()),
-        correct: cur.correct,
-        explanation: cur.explanation,
-      };
-    return viewId != null ? viewById.get(viewId) ?? null : null;
-  }, [cur, viewId, viewById]);
+    if (editable && (sel !== null || prompt))
+      return { prompt, subject, difficulty, choices: choices.filter((c) => c.text.trim()), correct, explanation };
+    return sel !== null ? viewById.get(sel) ?? null : null;
+  }, [editable, sel, prompt, subject, difficulty, choices, correct, explanation, viewById]);
 
-  function rowMenu(e: React.MouseEvent, cardId: number, plId?: number) {
-    e.preventDefault();
-    e.stopPropagation();
-    setAddPick(false);
-    setMenu({ x: e.clientX, y: e.clientY, cardId, plId });
-  }
+  const toggleTopic = (t: string) =>
+    setCollapsed((s) => {
+      const n = new Set(s);
+      n.has(t) ? n.delete(t) : n.add(t);
+      return n;
+    });
 
-  const tabTitle = (key: string) => state[key]?.prompt?.slice(0, 22) || "(untitled)";
+  // playlist rail stats
+  const stats = (id: number) => {
+    const its = items[id] ?? [];
+    const topics = new Set(its.map((it) => it.topic || NO_TOPIC)).size;
+    return `${its.length} cards · ${topics} topic${topics === 1 ? "" : "s"}`;
+  };
+
+  const picking = plId != null; // membership mode on
 
   return (
-    <div className="studio" onContextMenu={(e) => e.preventDefault()}>
-      {/* EXPLORER */}
+    <div className="studio studio4" onContextMenu={(e) => e.preventDefault()}>
+      {/* RAIL */}
+      <aside className="st-rail">
+        <button className={`st-rail-item ${plId === null ? "on" : ""}`} onClick={() => setPlId(null)}>
+          All cards
+        </button>
+        {playlists.map((p) => (
+          <button key={p.id} className={`st-rail-item ${plId === p.id ? "on" : ""}`} onClick={() => setPlId(p.id)}>
+            <span className="st-rail-title">{p.title}</span>
+            <span className="st-rail-stats">{stats(p.id)}</span>
+          </button>
+        ))}
+      </aside>
+
+      {/* EXPLORER (topic folders → cards) */}
       <aside className="st-tree">
         <div className="st-toolbar">
           <button onClick={newCard}>+ New card</button>
+          {picking && <span className="st-hint">dbl-click ▮ to add/remove</span>}
         </div>
-        <div className="st-group" onClick={() => setMyOpen((o) => !o)}>
-          {myOpen ? "▾" : "▸"} My cards ({cards.length})
-        </div>
-        {myOpen &&
-          cards.map((c) => (
-            <div
-              key={c.id}
-              className={`st-file ${active === `card:${c.id}` || viewId === c.id ? "on" : ""}`}
-              onClick={() => openCard(c.id)}
-              onContextMenu={(e) => rowMenu(e, c.id)}
-              title={c.prompt}
-            >
-              <span className={`st-dot s-${c.status}`}>{dot(c.status)}</span>
-              {c.prompt || "(untitled)"}
-            </div>
-          ))}
-
-        <div className="st-group">Playlists</div>
-        {playlists.map((p) => {
-          const isOpen = openPl.has(p.id);
+        {groups.map(({ topic: t, rows }) => {
+          const memberCount = picking ? rows.filter((r) => memberIds.has(r.id)).length : 0;
+          const isOpen = !collapsed.has(t);
           return (
-            <div key={p.id}>
-              <div
-                className="st-folder"
-                onClick={() =>
-                  setOpenPl((s) => {
-                    const n = new Set(s);
-                    n.has(p.id) ? n.delete(p.id) : n.add(p.id);
-                    return n;
-                  })
-                }
-              >
-                {isOpen ? "▾" : "▸"} {p.title} <span className="st-count">{p.count}</span>
+            <div key={t}>
+              <div className={`st-folder ${memberCount ? "has-member" : ""}`} onClick={() => toggleTopic(t)}>
+                {isOpen ? "▾" : "▸"} {t} <span className="st-count">{rows.length}</span>
+                {memberCount > 0 && <span className="st-badge">{memberCount}</span>}
               </div>
               {isOpen &&
-                (items[p.id] ?? []).map((it) => (
-                  <div
-                    key={it.id}
-                    className={`st-file nested ${active === `card:${it.id}` || viewId === it.id ? "on" : ""}`}
-                    onClick={() => openCard(it.id)}
-                    onContextMenu={(e) => rowMenu(e, it.id, p.id)}
-                    title={it.prompt}
-                  >
-                    {it.prompt}
-                  </div>
-                ))}
+                rows.map((r) => {
+                  const member = memberIds.has(r.id);
+                  return (
+                    <div
+                      key={r.id}
+                      className={`st-file ${sel === r.id ? "on" : ""} ${member ? "member" : ""}`}
+                      onClick={() => open(r.id)}
+                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setAddPick(false); setMenu({ x: e.clientX, y: e.clientY, cardId: r.id }); }}
+                      title={r.prompt}
+                    >
+                      <span
+                        className={`st-tag ${picking ? "live" : ""} ${member ? "on" : ""}`}
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => { e.stopPropagation(); void toggleMember(r.id); }}
+                        title={picking ? "double-click to add / remove" : ""}
+                      />
+                      <span className={`st-dot s-${r.status ?? "none"}`}>{dot(r.status)}</span>
+                      <span className="st-fname">{r.prompt || "(untitled)"}</span>
+                    </div>
+                  );
+                })}
             </div>
           );
         })}
       </aside>
 
-      {/* EDITOR with tab strip */}
+      {/* EDITOR */}
       <section className="st-editor">
-        {order.length > 0 && (
-          <div className="st-tabs">
-            {order.map((key) => (
-              <div key={key} className={`st-tab ${active === key ? "on" : ""}`} onClick={() => { setActive(key); setViewId(null); }}>
-                <span className="st-tab-dot">{dirty(key) ? "•" : ""}</span>
-                {tabTitle(key)}
-                <button className="st-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(key); }}>
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {!cur ? (
-          <p className="st-note">
-            {viewId != null ? "Read-only — not one of your cards." : "Pick a card, or start a new one."}
-          </p>
+        {!editable ? (
+          <p className="st-note">Read-only — not one of your cards.</p>
         ) : (
           <div className="st-form">
-            <textarea className="st-prompt" rows={2} value={cur.prompt} onChange={(e) => patch({ prompt: e.target.value })} placeholder="Question prompt…" />
+            <textarea className="st-prompt" rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Question prompt…" />
             <div className="st-row">
-              <input value={cur.subject} onChange={(e) => patch({ subject: e.target.value })} placeholder="Subject" />
-              <input value={cur.topic} onChange={(e) => patch({ topic: e.target.value })} placeholder="Topic" />
-              <select value={cur.difficulty} onChange={(e) => patch({ difficulty: Number(e.target.value) })}>
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
+              <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Topic" />
+              <select value={difficulty} onChange={(e) => setDifficulty(Number(e.target.value))}>
                 <option value={1}>1·leicht</option>
                 <option value={2}>2·mittel</option>
                 <option value={3}>3·schwer</option>
               </select>
             </div>
             <div className="st-choices">
-              {cur.choices.map((c, i) => (
+              {choices.map((c, i) => (
                 <div className="st-choice" key={c.id}>
                   <input
                     type="checkbox"
-                    checked={cur.correct.includes(c.id)}
-                    onChange={() =>
-                      patch({ correct: cur.correct.includes(c.id) ? cur.correct.filter((x) => x !== c.id) : [...cur.correct, c.id] })
-                    }
+                    checked={correct.includes(c.id)}
+                    onChange={() => setCorrect((p) => (p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id]))}
                   />
-                  <input
-                    value={c.text}
-                    onChange={(e) => patch({ choices: cur.choices.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)) })}
-                    placeholder={`Choice ${i + 1}`}
-                  />
+                  <input value={c.text} onChange={(e) => setChoices((p) => p.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)))} placeholder={`Choice ${i + 1}`} />
                   <button
-                    onClick={() =>
-                      patch({
-                        choices: cur.choices.length <= 2 ? cur.choices : cur.choices.filter((x) => x.id !== c.id),
-                        correct: cur.correct.filter((x) => x !== c.id),
-                      })
-                    }
-                    disabled={cur.choices.length <= 2}
+                    onClick={() => { setChoices((p) => (p.length <= 2 ? p : p.filter((x) => x.id !== c.id))); setCorrect((p) => p.filter((x) => x !== c.id)); }}
+                    disabled={choices.length <= 2}
                   >
                     ×
                   </button>
                 </div>
               ))}
-              <button className="st-link" onClick={() => patch({ choices: [...cur.choices, { id: `c${Date.now()}`, text: "" }] })}>
-                + choice
-              </button>
+              <button className="st-link" onClick={() => setChoices((p) => [...p, { id: `c${Date.now()}`, text: "" }])}>+ choice</button>
             </div>
-            <textarea className="st-expl" rows={2} value={cur.explanation} onChange={(e) => patch({ explanation: e.target.value })} placeholder="Explanation (shown after answering)" />
+            <textarea className="st-expl" rows={2} value={explanation} onChange={(e) => setExplanation(e.target.value)} placeholder="Explanation (shown after answering)" />
             <div className="st-save">
-              <select value={cur.visibility} onChange={(e) => patch({ visibility: e.target.value as "tenant" | "public" })}>
+              <select value={visibility} onChange={(e) => setVisibility(e.target.value as "tenant" | "public")}>
                 <option value="tenant">My school</option>
                 <option value="public">Public</option>
               </select>
               {err && <span className="st-err">{err}</span>}
               <span className="st-spacer" />
-              <button onClick={() => save(false)} disabled={saving}>
-                Save draft
-              </button>
-              <button className="st-primary" onClick={() => save(true)} disabled={saving}>
-                {cur.editId ? "Save & submit" : "Submit"}
-              </button>
+              <button onClick={() => save(false)} disabled={saving}>Save draft</button>
+              <button className="st-primary" onClick={() => save(true)} disabled={saving}>{editId ? "Save & submit" : "Submit"}</button>
             </div>
           </div>
         )}
@@ -408,9 +335,7 @@ export default function CardStudio({ tenantId }: Props) {
           <p className="st-note">Pick or start a card.</p>
         ) : (
           <div className="st-card">
-            <div className="st-card-meta">
-              {preview.subject || "—"} · {DIFF[preview.difficulty] ?? "—"}
-            </div>
+            <div className="st-card-meta">{preview.subject || "—"} · {DIFF[preview.difficulty] ?? "—"}</div>
             <p className="st-card-q">{preview.prompt || "(empty)"}</p>
             <ul className="st-card-choices">
               {preview.choices.map((ch) => (
@@ -425,27 +350,23 @@ export default function CardStudio({ tenantId }: Props) {
         )}
       </aside>
 
-      {/* CONTEXT MENU */}
+      {/* CONTEXT MENU (secondary add/remove to any playlist) */}
       {menu && (
         <div className="st-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => { openCard(menu.cardId); setMenu(null); }}>Open</button>
-          {menu.plId != null && (
-            <button onClick={() => { void removeFrom(menu.plId!, menu.cardId); setMenu(null); }}>Remove from playlist</button>
-          )}
+          <button onClick={() => { open(menu.cardId); setMenu(null); }}>Open</button>
           <div className="st-sub">
-            <button onClick={() => setAddPick((v) => !v)}>Add to playlist ▸</button>
+            <button onClick={() => setAddPick((v) => !v)}>Add / remove ▸</button>
             {addPick && (
               <div className="st-submenu">
-                {playlists.length === 0 && <span className="st-note">No playlists</span>}
-                {playlists.map((p) => (
-                  <button
-                    key={p.id}
-                    disabled={(items[p.id] ?? []).some((it) => it.id === menu.cardId)}
-                    onClick={() => { void addTo(p.id, menu.cardId); setMenu(null); }}
-                  >
-                    {p.title}
-                  </button>
-                ))}
+                {playlists.map((p) => {
+                  const inIt = (items[p.id] ?? []).some((it) => it.id === menu.cardId);
+                  return (
+                    <button key={p.id} onClick={() => { void (inIt ? removeFrom(p.id, menu.cardId) : addTo(p.id, menu.cardId)); setMenu(null); }}>
+                      {inIt ? "✓ " : "+ "}
+                      {p.title}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

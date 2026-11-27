@@ -2675,3 +2675,94 @@ body {
 .st-tab-x:hover {
   color: var(--text);
 }
+
+/* card studio: unified rail + topic explorer + tag-zone membership */
+.studio4 {
+  grid-template-columns: 150px 240px minmax(0, 1fr) 250px;
+}
+.st-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.st-rail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.st-rail-item.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.st-rail-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-rail-stats {
+  font-size: 11px;
+  color: var(--muted);
+}
+.st-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.st-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+.st-fname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-file.member {
+  background: color-mix(in srgb, var(--good) 8%, transparent);
+}
+.st-tag {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 15px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.st-tag.live {
+  cursor: pointer;
+}
+.st-tag.live:hover {
+  border-color: var(--good);
+}
+.st-tag.on {
+  background: var(--good);
+  border-color: var(--good);
+}
+.st-folder.has-member {
+  box-shadow: inset 2px 0 0 var(--good);
+}
+.st-badge {
+  margin-left: 4px;
+  font-size: 10px;
+  color: #06281a;
+  background: var(--good);
+  border-radius: 999px;
+  padding: 0 5px;
+}
+.s-none {
+  color: var(--muted);
+}
