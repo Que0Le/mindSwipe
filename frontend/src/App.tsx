@@ -48,14 +48,27 @@ function parseIdParam(): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+// Each top-level view has its own real URL path, so pages are linkable,
+// refreshable, and unwound one step at a time by the browser Back button.
+function pathView(): View {
+  const p = window.location.pathname;
+  if (p.startsWith("/teach")) return "teach";
+  if (p.startsWith("/author")) return "author"; // incl. /author/<tab>
+  if (p.startsWith("/swipe")) return "swipe";
+  return "dashboard";
+}
+
 export default function App() {
-  // Deep link (YouTube-Shorts style): /?id=N lands straight on that card in the
-  // feed. The id is the real post id — access is gated by RLS, not by secrecy,
-  // so a link only resolves to a card the viewer is allowed to see.
+  // Deep link (YouTube-Shorts style): /swipe?id=N — or legacy /?id=N — lands
+  // straight on that card in the feed. The id is the real post id; access is
+  // gated by RLS, not by secrecy.
   const initialId = useRef<number | null>(parseIdParam()).current;
+  const initialView = useRef<View>(
+    pathView() !== "dashboard" ? pathView() : initialId ? "swipe" : "dashboard"
+  ).current;
 
   const [identity, setIdentity] = useState<Identity | null>(null);
-  const [view, setView] = useState<View>(initialId ? "swipe" : "dashboard");
+  const [view, setView] = useState<View>(initialView);
   const [source, setSource] = useState<FeedSource>({ type: "all" });
   // The card the feed should open on; only set for the initial deep link, then
   // cleared once the user starts a fresh session (which begins at the top).
@@ -72,6 +85,7 @@ export default function App() {
   // True while the detail overlay is open, so swipe-driven URL updates don't
   // overwrite the detail history entry.
   const inDetailRef = useRef(false);
+  const synthDone = useRef(false);
 
   // Sign in (remembered persona, default Public/anon), load identity + state.
   useEffect(() => {
@@ -101,13 +115,26 @@ export default function App() {
     };
   }, []);
 
-  // On a deep-linked load, synthesise a dashboard entry underneath the card so
-  // Back / Home returns to the dashboard instead of leaving the app.
+  // On any deep load that isn't the plain dashboard, synthesise a dashboard
+  // entry underneath so Back / Home returns to the dashboard, and normalise the
+  // URL to a clean path for the landing view.
   useEffect(() => {
-    if (initialId) {
-      window.history.replaceState(null, "", window.location.pathname);
-      window.history.pushState({ ms: "swipe" }, "", `${window.location.pathname}?id=${initialId}`);
+    if (synthDone.current) return;
+    synthDone.current = true;
+    if (initialView === "dashboard" && !initialId) {
+      if (window.location.search) window.history.replaceState({ ms: "dashboard" }, "", "/");
+      return;
     }
+    // Preserve the exact landing URL (incl. sub-tabs like /author/playlists);
+    // only the legacy /?id=N deep link is normalised to /swipe?id=N.
+    const url =
+      initialView === "swipe" && !window.location.pathname.startsWith("/swipe")
+        ? initialId
+          ? `/swipe?id=${initialId}`
+          : "/swipe"
+        : window.location.pathname + window.location.search;
+    window.history.replaceState({ ms: "dashboard" }, "", "/");
+    window.history.pushState({ ms: initialView }, "", url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -116,19 +143,22 @@ export default function App() {
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
       const st = e.state as { ms?: string; id?: number } | null;
-      if (st?.ms === "detail") {
+      // Prefer the history entry's marker; fall back to the URL path (e.g. a
+      // bookmarked /teach the user navigated into with no stored state).
+      const ms = st?.ms ?? pathView();
+      if (ms === "detail") {
         inDetailRef.current = true;
-        if (st.id) getPost(st.id).then((p) => p && setOpenPost(p));
+        if (st?.id) getPost(st.id).then((p) => p && setOpenPost(p));
         setView("swipe");
-      } else if (st?.ms === "swipe") {
+      } else if (ms === "swipe") {
         inDetailRef.current = false;
         setOpenPost(null);
         setView("swipe");
-      } else if (st?.ms === "teach") {
+      } else if (ms === "teach") {
         inDetailRef.current = false;
         setOpenPost(null);
         setView("teach");
-      } else if (st?.ms === "author") {
+      } else if (ms === "author") {
         inDetailRef.current = false;
         setOpenPost(null);
         setView("author");
@@ -148,27 +178,31 @@ export default function App() {
     setView("swipe");
     viewed.current = new Set();
     inDetailRef.current = false;
-    window.history.pushState({ ms: "swipe" }, "", window.location.pathname);
+    window.history.pushState({ ms: "swipe" }, "", "/swipe");
   }, []);
 
   const openTeach = useCallback(() => {
     setView("teach");
-    window.history.pushState({ ms: "teach" }, "", window.location.pathname);
+    window.history.pushState({ ms: "teach" }, "", "/teach");
   }, []);
 
   const openAuthor = useCallback(() => {
     setView("author");
-    window.history.pushState({ ms: "author" }, "", window.location.pathname);
+    window.history.pushState({ ms: "author" }, "", "/author");
   }, []);
 
   const exitToDashboard = useCallback(() => {
-    if ((window.history.state as { ms?: string } | null)?.ms) window.history.back();
-    else setView("dashboard");
+    const ms = (window.history.state as { ms?: string } | null)?.ms;
+    if (ms && ms !== "dashboard") window.history.back();
+    else {
+      setView("dashboard");
+      window.history.replaceState({ ms: "dashboard" }, "", "/");
+    }
   }, []);
 
   const openDetail = useCallback((post: Post) => {
     inDetailRef.current = true;
-    window.history.pushState({ ms: "detail", id: post.id }, "", `${window.location.pathname}?id=${post.id}`);
+    window.history.pushState({ ms: "detail", id: post.id }, "", `/swipe?id=${post.id}`);
     setOpenPost(post);
   }, []);
 
@@ -183,7 +217,7 @@ export default function App() {
   const onActiveChange = useCallback((id: number | null) => {
     if (!id) return;
     if (!inDetailRef.current) {
-      window.history.replaceState({ ms: "swipe" }, "", `${window.location.pathname}?id=${id}`);
+      window.history.replaceState({ ms: "swipe" }, "", `/swipe?id=${id}`);
     }
     if (!viewed.current.has(id)) {
       viewed.current.add(id);

@@ -7,13 +7,35 @@ import {
   reviewPost,
   updateDraft,
 } from "../api";
+import PlaylistCurator from "./PlaylistCurator";
 
 interface Props {
   identity: Identity;
   onClose: () => void;
 }
 
-type Tab = "write" | "drafts" | "queue";
+type Tab = "write" | "drafts" | "playlists" | "queue";
+
+// Each tab is a real sub-route of /author, so it's linkable, refreshable and
+// unwound by the browser Back button.
+const TAB_PATH: Record<Tab, string> = {
+  write: "/author/write",
+  drafts: "/author/cards",
+  playlists: "/author/playlists",
+  queue: "/author/review",
+};
+function tabFromPath(): Tab {
+  switch (window.location.pathname) {
+    case "/author/cards":
+      return "drafts";
+    case "/author/playlists":
+      return "playlists";
+    case "/author/review":
+      return "queue";
+    default:
+      return "write";
+  }
+}
 
 // A choice in the editor carries a stable local id (c1, c2, …) so marking it
 // correct survives add/remove of other rows.
@@ -47,7 +69,28 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
   const tenantId = identity.tenantId as number; // gated: this page only opens for members
   const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
 
-  const [tab, setTab] = useState<Tab>("write");
+  const [tab, setTab] = useState<Tab>(() => tabFromPath());
+
+  // Switch tab + push its URL (so /author/playlists etc. is a real, back-able link).
+  const goTab = useCallback((t: Tab) => {
+    setTab(t);
+    if (tabFromPath() !== t) window.history.pushState({ ms: "author" }, "", TAB_PATH[t]);
+  }, []);
+
+  // Keep the active tab in sync when the user navigates history (Back/Forward).
+  useEffect(() => {
+    const onPop = () => setTab(tabFromPath());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Land on a canonical tab URL so the address bar always reflects the tab.
+  useEffect(() => {
+    if (window.location.pathname === "/author") {
+      window.history.replaceState({ ms: "author" }, "", TAB_PATH[tab]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- editor state ---------------------------------------------------------
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -107,8 +150,8 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
     // keep new local ids clear of existing ones
     const maxN = ec.reduce((m, c) => Math.max(m, Number.parseInt(c.id.replace(/\D/g, ""), 10) || 0), 0);
     choiceSeq.current = maxN + 1;
-    setTab("write");
-  }, []);
+    goTab("write");
+  }, [goTab]);
 
   function setChoiceText(id: string, text: string) {
     setChoices((prev) => prev.map((c) => (c.id === id ? { ...c, text } : c)));
@@ -150,7 +193,7 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
     if (!saved) return setFormError("Could not save — check your connection and try again.");
     resetForm();
     await Promise.all([reloadDrafts(), reloadQueue()]);
-    setTab("drafts");
+    goTab("drafts");
   }
 
   async function approve(id: number) {
@@ -180,14 +223,17 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
       </header>
 
       <nav className="author-tabs">
-        <button className={tab === "write" ? "on" : ""} onClick={() => setTab("write")}>
+        <button className={tab === "write" ? "on" : ""} onClick={() => goTab("write")}>
           {editingId ? "Edit card" : "Write"}
         </button>
-        <button className={tab === "drafts" ? "on" : ""} onClick={() => setTab("drafts")}>
+        <button className={tab === "drafts" ? "on" : ""} onClick={() => goTab("drafts")}>
           My cards{drafts.length ? ` (${drafts.length})` : ""}
         </button>
+        <button className={tab === "playlists" ? "on" : ""} onClick={() => goTab("playlists")}>
+          Playlists
+        </button>
         {isStaff && (
-          <button className={tab === "queue" ? "on" : ""} onClick={() => setTab("queue")}>
+          <button className={tab === "queue" ? "on" : ""} onClick={() => goTab("queue")}>
             Review{pendingCount ? ` (${pendingCount})` : ""}
           </button>
         )}
@@ -340,6 +386,11 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
               );
             })}
           </section>
+        )}
+
+        {/* ---- Playlists ---- */}
+        {tab === "playlists" && canAuthor && (
+          <PlaylistCurator tenantId={tenantId} myId={identity.userId} isStaff={isStaff} />
         )}
 
         {/* ---- Review queue (staff) ---- */}

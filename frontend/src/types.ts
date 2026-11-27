@@ -83,6 +83,33 @@ export interface Playlist {
   title: string;
   description: string | null;
   count: number;
+  createdBy: string | null;
+  visibility: "tenant" | "public";
+}
+
+// A card reference for a playlist's ordered items.
+export interface CardRef {
+  id: number;
+  prompt: string;
+  subject: string;
+  topic: string;
+}
+
+export interface PlaylistItem extends CardRef {
+  position: number;
+}
+
+// A fuller card row for the curation pool table (sortable + expandable).
+export interface PoolCard {
+  id: number;
+  prompt: string;
+  subject: string;
+  topic: string;
+  difficulty: number;
+  createdAt: string;
+  choices: Choice[];
+  correct: string[];
+  explanation: string;
 }
 
 export interface Assignment {

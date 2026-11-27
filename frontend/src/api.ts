@@ -7,6 +7,8 @@ import type {
   Comment,
   Draft,
   DraftInput,
+  PlaylistItem,
+  PoolCard,
   StudentEffort,
   StudentTopic,
   FeedPage,
@@ -88,7 +90,21 @@ interface DbPlaylistRow {
   slug: string;
   title: string;
   description: string | null;
+  created_by: string | null;
+  visibility: "tenant" | "public" | string;
   playlist_item: { count: number }[];
+}
+
+function mapPlaylistRow(r: DbPlaylistRow): Playlist {
+  return {
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    description: r.description,
+    count: r.playlist_item?.[0]?.count ?? 0,
+    createdBy: r.created_by,
+    visibility: r.visibility === "public" ? "public" : "tenant",
+  };
 }
 
 interface DbAssignmentRow {
@@ -138,13 +154,15 @@ export async function getFeed({ source, cursor = 0, limit = 8 }: FeedParams): Pr
   if (source.type === "playlist") {
     const { data, error } = await supabase
       .from("playlist_item")
-      .select(`position, post:post(${POST_COLS})`)
+      .select(`position, post:post(${POST_COLS},status)`)
       .eq("playlist_id", source.playlistId)
       .order("position", { ascending: true });
     if (error) throw error;
-    const items = ((data ?? []) as unknown as { post: DbPost | null }[])
+    // Deliver approved cards only — a curator may add a card that later leaves
+    // 'approved', and post_read returns drafts to staff, so pin it here too.
+    const items = ((data ?? []) as unknown as { post: (DbPost & { status: string }) | null }[])
       .map((r) => r.post)
-      .filter((p): p is DbPost => !!p)
+      .filter((p): p is DbPost & { status: string } => !!p && p.status === "approved")
       .map(mapPost);
     return { items, nextCursor: null, hasMore: false };
   }
@@ -251,16 +269,10 @@ export async function getPlaylists(): Promise<Playlist[]> {
   await ensureAuth();
   const { data, error } = await supabase
     .from("playlist")
-    .select("id,slug,title,description,playlist_item(count)")
+    .select("id,slug,title,description,created_by,visibility,playlist_item(count)")
     .order("id", { ascending: true });
   if (error) return [];
-  return ((data ?? []) as unknown as DbPlaylistRow[]).map((r) => ({
-    id: r.id,
-    slug: r.slug,
-    title: r.title,
-    description: r.description,
-    count: r.playlist_item?.[0]?.count ?? 0,
-  }));
+  return ((data ?? []) as unknown as DbPlaylistRow[]).map(mapPlaylistRow);
 }
 
 export async function getAssignments(): Promise<Assignment[]> {
@@ -677,6 +689,152 @@ export async function reviewPost(
     return false;
   }
   return true;
+}
+
+// --- playlist curation (author/teacher builds a playlist from approved cards) ---
+
+function slugify(title: string): string {
+  const base = title
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 40);
+  // A short random suffix keeps (tenant_id, slug) unique without a round trip.
+  return `${base || "playlist"}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** Create a playlist. created_by defaults to the caller (RLS: can_author). */
+export async function createPlaylist(
+  tenantId: number,
+  title: string,
+  description: string,
+  visibility: "tenant" | "public"
+): Promise<Playlist | null> {
+  await ensureAuth();
+  const myId = await currentUserId();
+  const { data, error } = await supabase
+    .from("playlist")
+    .insert({
+      tenant_id: tenantId,
+      slug: slugify(title),
+      title: title.trim(),
+      description: description.trim() || null,
+      visibility,
+    })
+    .select("id,slug,title,description,created_by,visibility,playlist_item(count)")
+    .single();
+  if (error) {
+    console.warn("createPlaylist:", error.message);
+    return null;
+  }
+  const r = data as unknown as DbPlaylistRow;
+  return { ...mapPlaylistRow(r), createdBy: r.created_by ?? myId };
+}
+
+/** Edit a playlist's metadata (RLS: owner or staff). */
+export async function updatePlaylist(
+  id: number,
+  patch: { title?: string; description?: string | null; visibility?: "tenant" | "public" }
+): Promise<boolean> {
+  await ensureAuth();
+  const row: Record<string, unknown> = {};
+  if (patch.title !== undefined) row.title = patch.title.trim();
+  if (patch.description !== undefined) row.description = patch.description?.trim() || null;
+  if (patch.visibility !== undefined) row.visibility = patch.visibility;
+  const { error } = await supabase.from("playlist").update(row).eq("id", id);
+  if (error) {
+    console.warn("updatePlaylist:", error.message);
+    return false;
+  }
+  return true;
+}
+
+/** Delete a playlist (RLS: owner or staff). playlist_item rows cascade. */
+export async function deletePlaylist(id: number): Promise<boolean> {
+  await ensureAuth();
+  const { error } = await supabase.from("playlist").delete().eq("id", id);
+  if (error) {
+    console.warn("deletePlaylist:", error.message);
+    return false;
+  }
+  return true;
+}
+
+/** The ordered cards in a playlist (approved only — matches the delivery feed). */
+export async function getPlaylistItems(playlistId: number): Promise<PlaylistItem[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("playlist_item")
+    .select("position, post:post(id,prompt,subject,topic,status)")
+    .eq("playlist_id", playlistId)
+    .order("position", { ascending: true });
+  if (error) return [];
+  return ((data ?? []) as unknown as {
+    position: number;
+    post: { id: number; prompt: string; subject: string | null; topic: string | null; status: string } | null;
+  }[])
+    .filter((r) => r.post && r.post.status === "approved")
+    .map((r) => {
+      const p = r.post as { id: number; prompt: string; subject: string | null; topic: string | null };
+      return { id: p.id, prompt: p.prompt, subject: p.subject ?? "", topic: p.topic ?? "", position: r.position };
+    });
+}
+
+/** Approved cards in the tenant — the pool the curator can add from, with the
+ *  metadata the table sorts on and the choices/answer for the expanded view. */
+export async function getApprovedCards(tenantId: number): Promise<PoolCard[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("post")
+    .select("id,prompt,subject,topic,difficulty,created_at,choices,answer")
+    .eq("tenant_id", tenantId)
+    .eq("status", "approved")
+    .order("id", { ascending: true });
+  if (error) return [];
+  return ((data ?? []) as {
+    id: number;
+    prompt: string;
+    subject: string | null;
+    topic: string | null;
+    difficulty: number | null;
+    created_at: string | null;
+    choices: Choice[] | null;
+    answer: { correct: string[]; explanation: string } | null;
+  }[]).map((r) => ({
+    id: r.id,
+    prompt: r.prompt,
+    subject: r.subject ?? "",
+    topic: r.topic ?? "",
+    difficulty: r.difficulty ?? 0,
+    createdAt: r.created_at ?? "",
+    choices: Array.isArray(r.choices) ? r.choices : [],
+    correct: r.answer?.correct ?? [],
+    explanation: r.answer?.explanation ?? "",
+  }));
+}
+
+/** Append a card to the end of a playlist (RLS: curate rights on the playlist). */
+export async function addToPlaylist(playlistId: number, postId: number, position: number): Promise<boolean> {
+  await ensureAuth();
+  const { error } = await supabase
+    .from("playlist_item")
+    .insert({ playlist_id: playlistId, post_id: postId, position });
+  if (error && error.code !== "23505") {
+    console.warn("addToPlaylist:", error.message);
+    return false;
+  }
+  return true;
+}
+
+export async function removeFromPlaylist(playlistId: number, postId: number): Promise<void> {
+  await ensureAuth();
+  const { error } = await supabase
+    .from("playlist_item")
+    .delete()
+    .eq("playlist_id", playlistId)
+    .eq("post_id", postId);
+  if (error) console.warn("removeFromPlaylist:", error.message);
 }
 
 // --- writes (build-1, unchanged) -------------------------------------------

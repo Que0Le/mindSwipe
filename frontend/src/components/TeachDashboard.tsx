@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ClassTopic, Identity, Playlist, Segment, StudentEffort } from "../types";
 import {
   getClassTopics,
@@ -20,6 +20,18 @@ interface Props {
 }
 
 type Tab = "overview" | "content" | "students";
+
+// Each tab is a real sub-route of /teach (linkable, refreshable, back-able).
+const TAB_PATH: Record<Tab, string> = {
+  overview: "/teach/overview",
+  content: "/teach/content",
+  students: "/teach/students",
+};
+function tabFromPath(): Tab {
+  if (window.location.pathname === "/teach/content") return "content";
+  if (window.location.pathname === "/teach/students") return "students";
+  return "overview";
+}
 type SegFilter = "all" | "at-risk" | "ahead";
 
 function fmtTime(ms: number | null): string {
@@ -43,7 +55,25 @@ const VERDICT: Record<string, { label: string; cls: string }> = {
 };
 
 export default function TeachDashboard({ identity, onClose }: Props) {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(() => tabFromPath());
+
+  const goTab = useCallback((t: Tab) => {
+    setTab(t);
+    if (tabFromPath() !== t) window.history.pushState({ ms: "teach" }, "", TAB_PATH[t]);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => setTab(tabFromPath());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    if (window.location.pathname === "/teach") {
+      window.history.replaceState({ ms: "teach" }, "", TAB_PATH[tab]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [students, setStudents] = useState<StudentEffort[]>([]);
   const [topics, setTopics] = useState<ClassTopic[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -140,7 +170,7 @@ export default function TeachDashboard({ identity, onClose }: Props) {
 
       <nav className="teach-tabs">
         {(["overview", "content", "students"] as Tab[]).map((t) => (
-          <button key={t} className={`teach-tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>
+          <button key={t} className={`teach-tab ${tab === t ? "on" : ""}`} onClick={() => goTab(t)}>
             {t === "overview" ? "Overview" : t === "content" ? "Content" : "Students"}
           </button>
         ))}
