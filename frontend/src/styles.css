@@ -2798,3 +2798,8 @@ body {
 .st-file {
   padding-left: 20px;
 }
+
+.st-cb:disabled {
+  opacity: 0.3;
+  cursor: default;
+}

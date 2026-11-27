@@ -298,16 +298,15 @@ export default function CardStudio({ tenantId, isStaff }: Props) {
                       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setAddPick(false); setMenu({ x: e.clientX, y: e.clientY, cardId: r.id }); }}
                       title={r.prompt}
                     >
-                      {picking && (
-                        <input
-                          type="checkbox"
-                          className="st-cb"
-                          checked={member}
-                          style={{ accentColor: plColor ?? undefined }}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={() => void toggleMember(r.id)}
-                        />
-                      )}
+                      <input
+                        type="checkbox"
+                        className="st-cb"
+                        checked={member}
+                        disabled={!picking}
+                        style={{ accentColor: plColor ?? undefined }}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => void toggleMember(r.id)}
+                      />
                       {dot(r.status) && <span className={`st-dot s-${r.status}`}>{dot(r.status)}</span>}
                       <span className="st-fname">{r.prompt || "(untitled)"}</span>
                     </div>
