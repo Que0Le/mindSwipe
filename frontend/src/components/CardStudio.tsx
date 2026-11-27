@@ -33,8 +33,9 @@ interface EChoice {
 }
 const blankChoices = (): EChoice[] => ["c1", "c2", "c3", "c4"].map((id) => ({ id, text: "" }));
 
+// Approved cards get no dot; pending ("unconfirmed") → yellow, rejected → ✗.
 function dot(s?: Draft["status"]): string {
-  return s === "approved" ? "●" : s === "rejected" ? "✗" : s === "pending" ? "○" : "·";
+  return s === "pending" ? "●" : s === "rejected" ? "✗" : "";
 }
 
 interface Row {
@@ -302,7 +303,7 @@ export default function CardStudio({ tenantId }: Props) {
                           onChange={() => void toggleMember(r.id)}
                         />
                       )}
-                      <span className={`st-dot s-${r.status ?? "none"}`}>{dot(r.status)}</span>
+                      {dot(r.status) && <span className={`st-dot s-${r.status}`}>{dot(r.status)}</span>}
                       <span className="st-fname">{r.prompt || "(untitled)"}</span>
                     </div>
                   );
