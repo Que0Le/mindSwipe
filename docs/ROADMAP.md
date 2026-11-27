@@ -177,6 +177,22 @@ flags + RLS scoping** — same codebase, same feed.
 
 #### Teacher dashboard — the real thing (a selling point, deserves its own page)
 
+> **Shipped (build-2).** Dedicated `/teach` page (own route, 3 tabs). **Overview**
+> runs a *conclusions engine* (`conclusions.ts`) that turns metrics into
+> plain-language insights ("Class struggling with Mathematik · Ableitung 50% —
+> reteach", "5 at risk: Mia, Paul…", "6 ahead"), plus at-a-glance stats and
+> weakest/strongest topics. **Content** shows each playlist's too-easy/too-hard
+> verdict + card-level drill-down (difficulty, time, distractors). **Students** is
+> a segmented roster (at-risk/inactive/on-track/ahead, cohort-relative), with a
+> **class filter** (7A/7B), **cross-class search**, and a **per-student panel**
+> (effort × outcome — "slow + wrong → needs support"). A **subject lens** ("Viewing
+> as: Homeroom · all subjects" vs "Mathematik teacher") re-scopes students, topics
+> and conclusions. Backed by views: student_effort, class_topic_mastery,
+> student_topic_mastery, student_subject_effort; model: learning_group /
+> group_member; seeded with a 25-student Lincoln cohort split into 7A/7B.
+> Remaining: playlist drop-off (needs sequential-attempt data), a seeded
+> university course (prof + TAs + fluid attendance) to exercise other `kind`s.
+
 The class dashboard is a key sell, so it should be a **dedicated page/route**, not
 a popup. A real school teacher wears two hats, and the dashboard must reflect both:
 
