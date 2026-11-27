@@ -23,6 +23,10 @@ interface Props {
 const DIFF = ["—", "leicht", "mittel", "schwer"];
 const NO_TOPIC = "(No topic)";
 
+// Each playlist is auto-assigned a colour from this palette; its members and
+// markers use that colour (later this can become a stored, user-picked colour).
+const PALETTE = ["#7c6cff", "#2bb3a3", "#e0893b", "#d9534f", "#4a9fe0", "#c56bd6", "#6cc24a", "#d4b73a"];
+
 interface EChoice {
   id: string;
   text: string;
@@ -106,6 +110,14 @@ export default function CardStudio({ tenantId }: Props) {
   const memberIds = useMemo(
     () => (plId != null ? new Set((items[plId] ?? []).map((it) => it.id)) : new Set<number>()),
     [plId, items]
+  );
+
+  const colorOf = useCallback(
+    (id: number) => {
+      const i = playlists.findIndex((p) => p.id === id);
+      return PALETTE[(i < 0 ? id : i) % PALETTE.length];
+    },
+    [playlists]
   );
 
   const reloadCards = useCallback(async () => setCards(await getMyDrafts()), []);
@@ -220,6 +232,7 @@ export default function CardStudio({ tenantId }: Props) {
   };
 
   const picking = plId != null; // membership mode on
+  const plColor = plId != null ? colorOf(plId) : null;
 
   return (
     <div className="studio studio4" onContextMenu={(e) => e.preventDefault()}>
@@ -229,8 +242,16 @@ export default function CardStudio({ tenantId }: Props) {
           All cards
         </button>
         {playlists.map((p) => (
-          <button key={p.id} className={`st-rail-item ${plId === p.id ? "on" : ""}`} onClick={() => setPlId(p.id)}>
-            <span className="st-rail-title">{p.title}</span>
+          <button
+            key={p.id}
+            className={`st-rail-item ${plId === p.id ? "on" : ""}`}
+            style={plId === p.id ? { borderColor: colorOf(p.id), background: colorOf(p.id) + "22" } : undefined}
+            onClick={() => setPlId(p.id)}
+          >
+            <span className="st-rail-title">
+              <span className="st-swatch" style={{ background: colorOf(p.id) }} />
+              {p.title}
+            </span>
             <span className="st-rail-stats">{stats(p.id)}</span>
           </button>
         ))}
@@ -240,16 +261,24 @@ export default function CardStudio({ tenantId }: Props) {
       <aside className="st-tree">
         <div className="st-toolbar">
           <button onClick={newCard}>+ New card</button>
-          {picking && <span className="st-hint">dbl-click ▮ to add/remove</span>}
+          {picking && <span className="st-hint">tick to add / remove</span>}
         </div>
         {groups.map(({ topic: t, rows }) => {
           const memberCount = picking ? rows.filter((r) => memberIds.has(r.id)).length : 0;
           const isOpen = !collapsed.has(t);
           return (
             <div key={t}>
-              <div className={`st-folder ${memberCount ? "has-member" : ""}`} onClick={() => toggleTopic(t)}>
+              <div
+                className={`st-folder ${memberCount ? "has-member" : ""}`}
+                style={memberCount && plColor ? { boxShadow: `inset 2px 0 0 ${plColor}` } : undefined}
+                onClick={() => toggleTopic(t)}
+              >
                 {isOpen ? "▾" : "▸"} {t} <span className="st-count">{rows.length}</span>
-                {memberCount > 0 && <span className="st-badge">{memberCount}</span>}
+                {memberCount > 0 && (
+                  <span className="st-badge" style={{ background: plColor ?? undefined }}>
+                    {memberCount}
+                  </span>
+                )}
               </div>
               {isOpen &&
                 rows.map((r) => {
@@ -257,17 +286,22 @@ export default function CardStudio({ tenantId }: Props) {
                   return (
                     <div
                       key={r.id}
-                      className={`st-file ${sel === r.id ? "on" : ""} ${member ? "member" : ""}`}
+                      className={`st-file ${sel === r.id ? "on" : ""}`}
+                      style={member && plColor ? { background: plColor + "22" } : undefined}
                       onClick={() => open(r.id)}
                       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setAddPick(false); setMenu({ x: e.clientX, y: e.clientY, cardId: r.id }); }}
                       title={r.prompt}
                     >
-                      <span
-                        className={`st-tag ${picking ? "live" : ""} ${member ? "on" : ""}`}
-                        onClick={(e) => e.stopPropagation()}
-                        onDoubleClick={(e) => { e.stopPropagation(); void toggleMember(r.id); }}
-                        title={picking ? "double-click to add / remove" : ""}
-                      />
+                      {picking && (
+                        <input
+                          type="checkbox"
+                          className="st-cb"
+                          checked={member}
+                          style={{ accentColor: plColor ?? undefined }}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => void toggleMember(r.id)}
+                        />
+                      )}
                       <span className={`st-dot s-${r.status ?? "none"}`}>{dot(r.status)}</span>
                       <span className="st-fname">{r.prompt || "(untitled)"}</span>
                     </div>

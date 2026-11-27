@@ -2459,6 +2459,7 @@ body {
 }
 .st-file.on {
   background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .st-dot {
   margin-right: 5px;
@@ -2765,4 +2766,26 @@ body {
 }
 .s-none {
   color: var(--muted);
+}
+
+/* card studio: per-playlist colour swatch + membership checkbox */
+.st-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 6px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+.st-rail-title {
+  display: flex;
+  align-items: center;
+}
+.st-cb {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
 }
