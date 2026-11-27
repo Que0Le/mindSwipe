@@ -8,17 +8,19 @@ import {
   updateDraft,
 } from "../api";
 import PlaylistCurator from "./PlaylistCurator";
+import CardStudio from "./CardStudio";
 
 interface Props {
   identity: Identity;
   onClose: () => void;
 }
 
-type Tab = "write" | "drafts" | "playlists" | "queue";
+type Tab = "studio" | "write" | "drafts" | "playlists" | "queue";
 
 // Each tab is a real sub-route of /author, so it's linkable, refreshable and
 // unwound by the browser Back button.
 const TAB_PATH: Record<Tab, string> = {
+  studio: "/author/studio",
   write: "/author/write",
   drafts: "/author/cards",
   playlists: "/author/playlists",
@@ -26,6 +28,8 @@ const TAB_PATH: Record<Tab, string> = {
 };
 function tabFromPath(): Tab {
   switch (window.location.pathname) {
+    case "/author/write":
+      return "write";
     case "/author/cards":
       return "drafts";
     case "/author/playlists":
@@ -33,7 +37,7 @@ function tabFromPath(): Tab {
     case "/author/review":
       return "queue";
     default:
-      return "write";
+      return "studio";
   }
 }
 
@@ -223,6 +227,9 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
       </header>
 
       <nav className="author-tabs">
+        <button className={tab === "studio" ? "on" : ""} onClick={() => goTab("studio")}>
+          Studio
+        </button>
         <button className={tab === "write" ? "on" : ""} onClick={() => goTab("write")}>
           {editingId ? "Edit card" : "Write"}
         </button>
@@ -387,6 +394,9 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
             })}
           </section>
         )}
+
+        {/* ---- Studio (explorer · editor · preview) ---- */}
+        {tab === "studio" && canAuthor && <CardStudio tenantId={tenantId} />}
 
         {/* ---- Playlists ---- */}
         {tab === "playlists" && canAuthor && (
