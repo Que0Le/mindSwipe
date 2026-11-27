@@ -19,6 +19,7 @@ interface Props {
   onStartSession: (source: FeedSource) => void;
   onSwitchPersona: (p: Persona) => void;
   onOpenTeach: () => void;
+  onOpenAuthor: () => void;
 }
 
 function dueLabel(dueAt: string | null): string {
@@ -30,7 +31,13 @@ function dueLabel(dueAt: string | null): string {
   return `due in ${days} days`;
 }
 
-export default function Dashboard({ identity, onStartSession, onSwitchPersona, onOpenTeach }: Props) {
+export default function Dashboard({
+  identity,
+  onStartSession,
+  onSwitchPersona,
+  onOpenTeach,
+  onOpenAuthor,
+}: Props) {
   const isMember = identity.tenantId != null;
 
   const [stats, setStats] = useState<Stats>({ answered: 0, correct: 0, likes: 0, viewed: 0 });
@@ -41,12 +48,12 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona, o
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ topic: string; count: number }[]>([]);
-  // The authoring tool stub (monitoring now opens the full /teach page).
-  const [tool, setTool] = useState<"authoring" | null>(null);
   const [insights, setInsights] = useState<{ id: number; title: string } | null>(null);
 
   const flags = identity.flags;
   const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
+  // Authoring is open to the dedicated `author` role as well as staff.
+  const canAuthor = identity.role === "author" || isStaff;
 
   const masteryMap = useMemo(() => {
     const m = new Map<string, TopicMastery>();
@@ -142,19 +149,19 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona, o
           </aside>
         )}
 
-        {/* Flag-gated staff tools: which appear depends on the tenant's plan. */}
-        {isStaff && (flags.monitoring_dashboard || flags.authoring) && (
+        {/* Flag-gated tools: which appear depends on role + the tenant's plan. */}
+        {((isStaff && flags.monitoring_dashboard) || (canAuthor && flags.authoring)) && (
           <section className="dash-sec">
             <h2 className="sec-title">Teaching tools</h2>
             <div className="tools">
-              {flags.monitoring_dashboard && (
+              {isStaff && flags.monitoring_dashboard && (
                 <button className="tool-card" onClick={onOpenTeach}>
                   <span className="tool-ico">📊</span>
                   <span>Class dashboard</span>
                 </button>
               )}
-              {flags.authoring && (
-                <button className="tool-card" onClick={() => setTool("authoring")}>
+              {canAuthor && flags.authoring && (
+                <button className="tool-card" onClick={onOpenAuthor}>
                   <span className="tool-ico">✍️</span>
                   <span>Author a card</span>
                 </button>
@@ -277,21 +284,6 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona, o
           </section>
         )}
       </div>
-
-      {tool && (
-        <div className="tool-scrim" onClick={() => setTool(null)}>
-          <div className="tool-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="back" onClick={() => setTool(null)} aria-label="Close">
-              ← Close
-            </button>
-            <h2>Author a card</h2>
-            <p className="tool-note">
-              Authoring is enabled for your school ({identity.plan} plan). The card editor —
-              draft → review → publish — will appear here.
-            </p>
-          </div>
-        </div>
-      )}
 
       {insights && (
         <PlaylistInsights

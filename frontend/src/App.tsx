@@ -21,10 +21,11 @@ import {
 } from "./localState";
 import Dashboard from "./components/Dashboard";
 import TeachDashboard from "./components/TeachDashboard";
+import AuthorDashboard from "./components/AuthorDashboard";
 import Feed from "./components/Feed";
 import Detail from "./components/Detail";
 
-type View = "dashboard" | "swipe" | "teach";
+type View = "dashboard" | "swipe" | "teach" | "author";
 
 function sourceTitle(s: FeedSource): string {
   switch (s.type) {
@@ -127,6 +128,10 @@ export default function App() {
         inDetailRef.current = false;
         setOpenPost(null);
         setView("teach");
+      } else if (st?.ms === "author") {
+        inDetailRef.current = false;
+        setOpenPost(null);
+        setView("author");
       } else {
         inDetailRef.current = false;
         setOpenPost(null);
@@ -149,6 +154,11 @@ export default function App() {
   const openTeach = useCallback(() => {
     setView("teach");
     window.history.pushState({ ms: "teach" }, "", window.location.pathname);
+  }, []);
+
+  const openAuthor = useCallback(() => {
+    setView("author");
+    window.history.pushState({ ms: "author" }, "", window.location.pathname);
   }, []);
 
   const exitToDashboard = useCallback(() => {
@@ -257,6 +267,14 @@ export default function App() {
     );
   }
 
+  if (view === "author") {
+    return (
+      <div className="app">
+        <AuthorDashboard identity={identity} onClose={exitToDashboard} />
+      </div>
+    );
+  }
+
   if (view === "dashboard") {
     return (
       <div className="app">
@@ -265,6 +283,7 @@ export default function App() {
           onStartSession={startSession}
           onSwitchPersona={switchPersona}
           onOpenTeach={openTeach}
+          onOpenAuthor={openAuthor}
         />
       </div>
     );

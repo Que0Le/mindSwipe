@@ -176,3 +176,34 @@ export interface Comment {
   authorName: string | null;
   createdAt: string;
 }
+
+// --- authoring (draft → review → publish) ----------------------------------
+
+// What the editor collects / submits. visibility: 'tenant' (own school) | 'public'.
+export interface DraftInput {
+  subject: string;
+  topic: string;
+  difficulty: number; // 1 leicht · 2 mittel · 3 schwer
+  prompt: string;
+  choices: Choice[];
+  correct: string[]; // ids of the correct choice(s)
+  explanation: string;
+  visibility: "tenant" | "public";
+}
+
+// A card as seen in the author's drafts list / the staff review queue.
+export interface Draft {
+  id: number;
+  status: ModerationStatus;
+  subject: string;
+  topic: string;
+  difficulty: number;
+  prompt: string;
+  choices: Choice[];
+  correct: string[];
+  explanation: string;
+  visibility: "tenant" | "public";
+  mine: boolean;
+  reviewNote: string | null;
+  createdAt: string;
+}

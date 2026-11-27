@@ -1,9 +1,12 @@
 import type {
   Assignment,
   CardInsight,
+  Choice,
   ClassMember,
   ClassTopic,
   Comment,
+  Draft,
+  DraftInput,
   StudentEffort,
   StudentTopic,
   FeedPage,
@@ -18,6 +21,15 @@ import type {
 import type { BoolMap, AnswerMap } from "./localState";
 import { supabase } from "./supabase";
 import { ensureAuth } from "./auth";
+
+/** The signed-in user's id from the locally cached session ("" if none). Reads
+ *  the session rather than hitting /auth/v1/user, so callers stay single-round-trip. */
+async function currentUserId(): Promise<string> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.user?.id ?? "";
+}
 
 // Columns we read for a card. Exercise mode ships the answer for instant grading.
 const POST_COLS =
@@ -151,15 +163,19 @@ export async function getFeed({ source, cursor = 0, limit = 8 }: FeedParams): Pr
       .from("post")
       .select(POST_COLS)
       .in("id", postIds)
+      .eq("status", "approved")
       .order("id", { ascending: true });
     if (error) throw error;
     return { items: ((data ?? []) as unknown as DbPost[]).map(mapPost), nextCursor: null, hasMore: false };
   }
 
-  // Open-ended: keyset pagination over approved posts.
+  // Open-ended: keyset pagination over approved posts. post_read now also returns
+  // the caller's own drafts + (for staff) the tenant review queue, so the feed
+  // must pin status explicitly or an author/teacher would see pending cards here.
   let query = supabase
     .from("post")
     .select(POST_COLS)
+    .eq("status", "approved")
     .gt("id", cursor)
     .order("id", { ascending: true })
     .limit(limit + 1);
@@ -180,7 +196,12 @@ export async function getFeed({ source, cursor = 0, limit = 8 }: FeedParams): Pr
 
 /** A single card (deep-link / refresh). */
 export async function getPost(id: number): Promise<Post | null> {
-  const { data, error } = await supabase.from("post").select(POST_COLS).eq("id", id).maybeSingle();
+  const { data, error } = await supabase
+    .from("post")
+    .select(POST_COLS)
+    .eq("id", id)
+    .eq("status", "approved")
+    .maybeSingle();
   if (error || !data) return null;
   return mapPost(data as unknown as DbPost);
 }
@@ -378,10 +399,7 @@ export async function getStudentEffort(tenantId: number): Promise<StudentEffort[
 /** Subjects the current teacher teaches (for the dashboard's subject lens). */
 export async function getTeacherSubjects(): Promise<string[]> {
   await ensureAuth();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const uid = session?.user?.id;
+  const uid = await currentUserId();
   if (!uid) return [];
   const { data } = await supabase.from("group_member").select("subject").eq("user_id", uid).not("subject", "is", null);
   const set = new Set<string>();
@@ -495,12 +513,7 @@ export async function getClassTopics(): Promise<ClassTopic[]> {
 
 export async function getComments(postId: number): Promise<Comment[]> {
   await ensureAuth();
-  // The session is already cached locally — read the id from it rather than
-  // hitting /auth/v1/user, so a Detail open is a single round trip.
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const myId = session?.user?.id ?? "";
+  const myId = await currentUserId();
   const { data, error } = await supabase
     .from("comment")
     .select("id,post_id,body,status,user_id,created_at")
@@ -530,6 +543,140 @@ export async function moderateComment(id: number, status: "approved" | "rejected
   await ensureAuth();
   const { error } = await supabase.from("comment").update({ status }).eq("id", id);
   if (error) console.warn("moderateComment:", error.message);
+}
+
+// --- authoring (draft → review → publish) ----------------------------------
+
+interface DbDraftRow {
+  id: number;
+  status: ModerationStatus;
+  subject: string | null;
+  topic: string | null;
+  difficulty: number | null;
+  prompt: string;
+  choices: Choice[] | null;
+  answer: { correct: string[]; explanation: string } | null;
+  visibility: "tenant" | "public" | string;
+  created_by: string | null;
+  review_note: string | null;
+  created_at: string;
+}
+
+const DRAFT_COLS =
+  "id,status,subject,topic,difficulty,prompt,choices,answer,visibility,created_by,review_note,created_at";
+
+function mapDraft(r: DbDraftRow, myId: string): Draft {
+  return {
+    id: r.id,
+    status: r.status,
+    subject: r.subject ?? "",
+    topic: r.topic ?? "",
+    difficulty: r.difficulty ?? 1,
+    prompt: r.prompt ?? "",
+    choices: Array.isArray(r.choices) ? r.choices : [],
+    correct: r.answer?.correct ?? [],
+    explanation: r.answer?.explanation ?? "",
+    visibility: r.visibility === "public" ? "public" : "tenant",
+    mine: r.created_by === myId,
+    reviewNote: r.review_note,
+    createdAt: r.created_at,
+  };
+}
+
+// Pack the editor's fields into the post row shape (choices + answer jsonb).
+function draftToRow(input: DraftInput) {
+  return {
+    subject: input.subject.trim() || null,
+    topic: input.topic.trim() || null,
+    difficulty: input.difficulty,
+    question_type: "mcq",
+    prompt: input.prompt.trim(),
+    choices: input.choices,
+    answer: { correct: input.correct, explanation: input.explanation.trim() },
+    visibility: input.visibility,
+  };
+}
+
+/** Create a card draft. RLS forces status='pending' and created_by=auth.uid(). */
+export async function createDraft(tenantId: number, input: DraftInput): Promise<Draft | null> {
+  await ensureAuth();
+  const myId = await currentUserId();
+  const { data, error } = await supabase
+    .from("post")
+    .insert({ ...draftToRow(input), tenant_id: tenantId, status: "pending", created_by: myId })
+    .select(DRAFT_COLS)
+    .single();
+  if (error) {
+    console.warn("createDraft:", error.message);
+    return null;
+  }
+  return mapDraft(data as DbDraftRow, myId);
+}
+
+/** Revise an own draft (pending/rejected). Resubmitting a rejected card returns
+ *  it to 'pending' for another review pass. RLS enforces ownership + status gate. */
+export async function updateDraft(id: number, input: DraftInput): Promise<Draft | null> {
+  await ensureAuth();
+  const myId = await currentUserId();
+  const { data, error } = await supabase
+    .from("post")
+    .update({ ...draftToRow(input), status: "pending", review_note: null })
+    .eq("id", id)
+    .select(DRAFT_COLS)
+    .single();
+  if (error) {
+    console.warn("updateDraft:", error.message);
+    return null;
+  }
+  return mapDraft(data as DbDraftRow, myId);
+}
+
+/** The author's own cards (any status). post_read returns created_by = me. */
+export async function getMyDrafts(): Promise<Draft[]> {
+  await ensureAuth();
+  const myId = await currentUserId();
+  const { data, error } = await supabase
+    .from("post")
+    .select(DRAFT_COLS)
+    .eq("created_by", myId)
+    .order("created_at", { ascending: false });
+  if (error) return [];
+  return ((data ?? []) as DbDraftRow[]).map((r) => mapDraft(r, myId));
+}
+
+/** The staff review queue: pending cards in the tenant. post_read returns the
+ *  whole tenant to staff; we filter to pending here. */
+export async function getReviewQueue(tenantId: number): Promise<Draft[]> {
+  await ensureAuth();
+  const myId = await currentUserId();
+  const { data, error } = await supabase
+    .from("post")
+    .select(DRAFT_COLS)
+    .eq("tenant_id", tenantId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+  if (error) return [];
+  return ((data ?? []) as DbDraftRow[]).map((r) => mapDraft(r, myId));
+}
+
+/** Staff approve/reject a card. The DB trigger stamps the reviewer and blocks a
+ *  non-staff self-approval; a rejection carries an optional note back to the author. */
+export async function reviewPost(
+  id: number,
+  status: "approved" | "rejected",
+  note?: string
+): Promise<boolean> {
+  await ensureAuth();
+  const patch: { status: string; review_note: string | null } = {
+    status,
+    review_note: status === "rejected" ? note?.trim() || null : null,
+  };
+  const { error } = await supabase.from("post").update(patch).eq("id", id);
+  if (error) {
+    console.warn("reviewPost:", error.message);
+    return false;
+  }
+  return true;
 }
 
 // --- writes (build-1, unchanged) -------------------------------------------
