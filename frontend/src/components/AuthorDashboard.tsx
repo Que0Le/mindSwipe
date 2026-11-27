@@ -389,7 +389,7 @@ export default function AuthorDashboard({ identity, onClose }: Props) {
         )}
 
         {/* ---- Studio (explorer · editor · preview) ---- */}
-        {tab === "studio" && canAuthor && <CardStudio tenantId={tenantId} />}
+        {tab === "studio" && canAuthor && <CardStudio tenantId={tenantId} isStaff={isStaff} />}
 
 
         {/* ---- Review queue (staff) ---- */}

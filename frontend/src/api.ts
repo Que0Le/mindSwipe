@@ -787,7 +787,7 @@ export async function getApprovedCards(tenantId: number): Promise<PoolCard[]> {
   await ensureAuth();
   const { data, error } = await supabase
     .from("post")
-    .select("id,prompt,subject,topic,difficulty,created_at,choices,answer")
+    .select("id,prompt,subject,topic,difficulty,created_at,choices,answer,visibility")
     .eq("tenant_id", tenantId)
     .eq("status", "approved")
     .order("id", { ascending: true });
@@ -801,6 +801,7 @@ export async function getApprovedCards(tenantId: number): Promise<PoolCard[]> {
     created_at: string | null;
     choices: Choice[] | null;
     answer: { correct: string[]; explanation: string } | null;
+    visibility: string | null;
   }[]).map((r) => ({
     id: r.id,
     prompt: r.prompt,
@@ -811,6 +812,7 @@ export async function getApprovedCards(tenantId: number): Promise<PoolCard[]> {
     choices: Array.isArray(r.choices) ? r.choices : [],
     correct: r.answer?.correct ?? [],
     explanation: r.answer?.explanation ?? "",
+    visibility: r.visibility === "public" ? "public" : "tenant",
   }));
 }
 

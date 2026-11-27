@@ -18,6 +18,7 @@ import {
 
 interface Props {
   tenantId: number;
+  isStaff: boolean;
 }
 
 const DIFF = ["—", "leicht", "mittel", "schwer"];
@@ -56,7 +57,7 @@ interface ViewCard {
   explanation: string;
 }
 
-export default function CardStudio({ tenantId }: Props) {
+export default function CardStudio({ tenantId, isStaff }: Props) {
   const [cards, setCards] = useState<Draft[]>([]);
   const [pool, setPool] = useState<PoolCard[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -161,23 +162,27 @@ export default function CardStudio({ tenantId }: Props) {
   function open(id: number) {
     setSel(id);
     setErr(null);
+    // Prefer my own draft; staff may also edit any approved tenant card (loaded
+    // from the pool). Anything else is preview-only.
     const c = mine.get(id);
-    if (c) {
-      setEditId(c.id);
-      setSubject(c.subject);
-      setTopic(c.topic);
-      setDifficulty(c.difficulty || 1);
-      setPrompt(c.prompt);
-      setChoices(c.choices.length ? c.choices.map((x) => ({ id: x.id, text: x.text })) : blankChoices());
-      setCorrect(c.correct);
-      setExplanation(c.explanation);
-      setVisibility(c.visibility);
+    const pc = c ? null : pool.find((p) => p.id === id);
+    const src = c ?? (isStaff ? pc : null);
+    if (src) {
+      setEditId(id);
+      setSubject(src.subject);
+      setTopic(src.topic);
+      setDifficulty(src.difficulty || 1);
+      setPrompt(src.prompt);
+      setChoices(src.choices.length ? src.choices.map((x) => ({ id: x.id, text: x.text })) : blankChoices());
+      setCorrect(src.correct);
+      setExplanation(src.explanation);
+      setVisibility(src.visibility);
     } else {
       setEditId(null);
     }
   }
 
-  const editable = sel === null || mine.has(sel);
+  const editable = sel === null || mine.has(sel) || (isStaff && pool.some((p) => p.id === sel));
 
   async function save(submit: boolean) {
     const kept = choices.map((c) => ({ id: c.id, text: c.text.trim() })).filter((c) => c.text);

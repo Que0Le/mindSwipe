@@ -110,6 +110,7 @@ export interface PoolCard {
   choices: Choice[];
   correct: string[];
   explanation: string;
+  visibility: "tenant" | "public";
 }
 
 export interface Assignment {

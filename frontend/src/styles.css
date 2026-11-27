@@ -2789,3 +2789,12 @@ body {
   margin: 0;
   cursor: pointer;
 }
+
+/* card studio: indent cards under topic folders; bolder folders */
+.st-folder {
+  font-weight: 600;
+  margin-top: 4px;
+}
+.st-file {
+  padding-left: 20px;
+}
