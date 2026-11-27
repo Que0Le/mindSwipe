@@ -141,6 +141,13 @@ export interface ClassTopic {
   accuracy: number | null;
 }
 
+export interface StudentTopic {
+  subject: string | null;
+  topic: string | null;
+  answered: number;
+  accuracy: number | null;
+}
+
 export type Segment = "inactive" | "at-risk" | "on-track" | "ahead";
 
 export interface Insight {

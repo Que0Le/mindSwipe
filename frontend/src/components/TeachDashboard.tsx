@@ -3,6 +3,7 @@ import type { ClassTopic, Identity, Playlist, Segment, StudentEffort } from "../
 import { getClassTopics, getPlaylistVerdicts, getPlaylists, getStudentEffort } from "../api";
 import { buildInsights, cohortMedianAnswered, segmentOf } from "../conclusions";
 import PlaylistInsights from "./PlaylistInsights";
+import StudentDetail from "./StudentDetail";
 
 interface Props {
   identity: Identity;
@@ -39,7 +40,7 @@ export default function TeachDashboard({ identity, onClose }: Props) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [verdicts, setVerdicts] = useState<Map<number, { cards: number; verdict: string }>>(new Map());
   const [openInsights, setOpenInsights] = useState<{ id: number; title: string } | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selected, setSelected] = useState<StudentEffort | null>(null);
   const [segFilter, setSegFilter] = useState<SegFilter>("all");
 
   const tenantId = identity.tenantId;
@@ -200,26 +201,19 @@ export default function TeachDashboard({ identity, onClose }: Props) {
             </div>
             {shownStudents.map((s) => {
               const seg = SEG[segmentOf(s, medAns)];
-              const open = expanded === s.userId;
               return (
-                <div key={s.userId}>
-                  <button className="roster-row student-grid student-row" onClick={() => setExpanded(open ? null : s.userId)}>
-                    <span className="roster-name">
-                      {s.displayName ?? "Student"} <span className={`seg ${seg.cls}`}>{seg.label}</span>
-                    </span>
-                    <span>{s.answered}</span>
-                    <span>{s.accuracy ?? "—"}%</span>
-                    <span>{fmtTime(s.medianMs)}</span>
-                  </button>
-                  {open && (
-                    <div className="student-detail">
-                      <p className="tool-note">
-                        {s.answered} cards answered · {s.accuracy ?? 0}% correct · {fmtTime(s.medianMs)} median
-                        {s.lastAt ? ` · last active ${new Date(s.lastAt).toLocaleDateString()}` : ""}
-                      </p>
-                    </div>
-                  )}
-                </div>
+                <button
+                  key={s.userId}
+                  className="roster-row student-grid student-row"
+                  onClick={() => setSelected(s)}
+                >
+                  <span className="roster-name">
+                    {s.displayName ?? "Student"} <span className={`seg ${seg.cls}`}>{seg.label}</span>
+                  </span>
+                  <span>{s.answered}</span>
+                  <span>{s.accuracy ?? "—"}%</span>
+                  <span>{fmtTime(s.medianMs)}</span>
+                </button>
               );
             })}
             {shownStudents.length === 0 && <p className="sec-empty">No students in this filter.</p>}
@@ -230,6 +224,7 @@ export default function TeachDashboard({ identity, onClose }: Props) {
       {openInsights && (
         <PlaylistInsights playlistId={openInsights.id} title={openInsights.title} onClose={() => setOpenInsights(null)} />
       )}
+      {selected && <StudentDetail student={selected} cohortMedAns={medAns} onClose={() => setSelected(null)} />}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import type {
   ClassTopic,
   Comment,
   StudentEffort,
+  StudentTopic,
   FeedPage,
   FeedSource,
   ModerationStatus,
@@ -372,6 +373,18 @@ export async function getStudentEffort(tenantId: number): Promise<StudentEffort[
     medianMs: r.median_ms,
     lastAt: r.last_at,
   }));
+}
+
+/** One student's per-topic accuracy (RLS: staff may read their students'). */
+export async function getStudentTopics(userId: string): Promise<StudentTopic[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("student_topic_mastery")
+    .select("subject,topic,answered,accuracy")
+    .eq("user_id", userId)
+    .order("accuracy", { ascending: true });
+  if (error) return [];
+  return (data ?? []) as StudentTopic[];
 }
 
 /** A too-easy / too-hard verdict per playlist, from its cards' correct-rates. */

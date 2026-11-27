@@ -1,4 +1,4 @@
-import type { ClassTopic, Insight, Segment, StudentEffort } from "./types";
+import type { ClassTopic, Insight, Segment, StudentEffort, StudentTopic } from "./types";
 
 // The conclusions layer: turn metric rows into plain-language, actionable
 // statements. Pure functions over RLS-gated data — no network, easy to tune.
@@ -104,5 +104,37 @@ export function buildInsights(
   }
 
   if (out.length === 0) out.push({ kind: "info", text: "Not enough activity yet to draw conclusions." });
+  return out;
+}
+
+/** Per-student conclusions for the drill-down panel. */
+export function studentConclusion(s: StudentEffort, topics: StudentTopic[], cohortMedAns: number): Insight[] {
+  const out: Insight[] = [];
+  const name = firstName(s.displayName);
+  const seg = segmentOf(s, cohortMedAns);
+  const slow = s.medianMs != null && s.medianMs > 12000;
+
+  if (seg === "at-risk") {
+    out.push({
+      kind: "warn",
+      text: `${name} is struggling — ${s.accuracy}% over ${s.answered} cards${
+        slow ? ", and slow: trying hard, needs support." : ": fast misses, may be guessing."
+      }`,
+    });
+  } else if (seg === "inactive") {
+    out.push({ kind: "warn", text: `${name} has barely started (${s.answered} cards). Encourage them to begin.` });
+  } else if (seg === "ahead") {
+    out.push({ kind: "good", text: `${name} is ahead — ${s.accuracy}% over ${s.answered} cards. Offer stretch material.` });
+  } else {
+    out.push({ kind: "info", text: `${name} is on track — ${s.accuracy}% over ${s.answered} cards.` });
+  }
+
+  const sig = topics.filter((t) => t.answered >= 3 && t.accuracy != null);
+  const weak = [...sig].sort((a, b) => (a.accuracy ?? 0) - (b.accuracy ?? 0))[0];
+  const strong = [...sig].sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0))[0];
+  if (weak && (weak.accuracy ?? 100) <= 55) out.push({ kind: "warn", text: `Weakest topic: ${weak.topic} (${weak.accuracy}%).` });
+  if (strong && (strong.accuracy ?? 0) >= 80 && strong.topic !== weak?.topic) {
+    out.push({ kind: "good", text: `Strongest topic: ${strong.topic} (${strong.accuracy}%).` });
+  }
   return out;
 }
