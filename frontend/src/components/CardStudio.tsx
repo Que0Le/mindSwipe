@@ -11,9 +11,8 @@ import {
   updateDraft,
 } from "../api";
 
-// v1 "card studio": an explorer (My cards + playlists) on the left, a compact
-// editor in the middle, a live preview on the right. Deliberately low-chrome
-// and dense — the point is to see and move many cards, not decoration.
+// Card studio v2: explorer + MULTIPLE open tabs (each its own editor state,
+// with a dirty dot) + live preview. Low-chrome and dense.
 
 interface Props {
   tenantId: number;
@@ -21,22 +20,56 @@ interface Props {
 
 const DIFF = ["—", "leicht", "mittel", "schwer"];
 
-interface EditChoice {
+interface EChoice {
   id: string;
   text: string;
 }
-const blankChoices = (): EditChoice[] => ["c1", "c2", "c3", "c4"].map((id) => ({ id, text: "" }));
+const blank = (): EState => ({
+  editId: null,
+  subject: "",
+  topic: "",
+  difficulty: 1,
+  prompt: "",
+  choices: ["c1", "c2", "c3", "c4"].map((id) => ({ id, text: "" })),
+  correct: [],
+  explanation: "",
+  visibility: "tenant",
+});
 
-// ○ draft · ● published · ✗ rejected
+// One open tab's editable contents.
+interface EState {
+  editId: number | null;
+  subject: string;
+  topic: string;
+  difficulty: number;
+  prompt: string;
+  choices: EChoice[];
+  correct: string[];
+  explanation: string;
+  visibility: "tenant" | "public";
+}
+
+function fromDraft(d: Draft): EState {
+  return {
+    editId: d.id,
+    subject: d.subject,
+    topic: d.topic,
+    difficulty: d.difficulty || 1,
+    prompt: d.prompt,
+    choices: d.choices.length ? d.choices.map((c) => ({ id: c.id, text: c.text })) : blank().choices,
+    correct: d.correct,
+    explanation: d.explanation,
+    visibility: d.visibility,
+  };
+}
+
 function dot(s: Draft["status"]): string {
   return s === "approved" ? "●" : s === "rejected" ? "✗" : "○";
 }
 
-// A card we can show in the preview (owned draft or any approved pool card).
 interface ViewCard {
   prompt: string;
   subject: string;
-  topic: string;
   difficulty: number;
   choices: Choice[];
   correct: string[];
@@ -51,20 +84,16 @@ export default function CardStudio({ tenantId }: Props) {
   const [openPl, setOpenPl] = useState<Set<number>>(new Set());
   const [myOpen, setMyOpen] = useState(true);
 
-  const [sel, setSel] = useState<number | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; cardId: number; plId?: number } | null>(null);
-  const [addPick, setAddPick] = useState(false); // "add to playlist" submenu open
+  // tabs: an ordered list of keys, each with current + baseline state
+  const [order, setOrder] = useState<string[]>([]);
+  const [state, setState] = useState<Record<string, EState>>({});
+  const [base, setBase] = useState<Record<string, string>>({}); // key -> JSON baseline
+  const [active, setActive] = useState<string | null>(null);
+  const [viewId, setViewId] = useState<number | null>(null); // non-owned preview
+  const [newSeq, setNewSeq] = useState(1);
 
-  // editor fields (only meaningful when the selected card is one of mine)
-  const [editId, setEditId] = useState<number | null>(null);
-  const [subject, setSubject] = useState("");
-  const [topic, setTopic] = useState("");
-  const [difficulty, setDifficulty] = useState(1);
-  const [prompt, setPrompt] = useState("");
-  const [choices, setChoices] = useState<EditChoice[]>(blankChoices);
-  const [correct, setCorrect] = useState<string[]>([]);
-  const [explanation, setExplanation] = useState("");
-  const [visibility, setVisibility] = useState<"tenant" | "public">("tenant");
+  const [menu, setMenu] = useState<{ x: number; y: number; cardId: number; plId?: number } | null>(null);
+  const [addPick, setAddPick] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -72,16 +101,7 @@ export default function CardStudio({ tenantId }: Props) {
   const viewById = useMemo(() => {
     const m = new Map<number, ViewCard>();
     for (const p of pool) m.set(p.id, p);
-    for (const c of cards)
-      m.set(c.id, {
-        prompt: c.prompt,
-        subject: c.subject,
-        topic: c.topic,
-        difficulty: c.difficulty,
-        choices: c.choices,
-        correct: c.correct,
-        explanation: c.explanation,
-      });
+    for (const c of cards) m.set(c.id, c);
     return m;
   }, [pool, cards]);
 
@@ -99,7 +119,6 @@ export default function CardStudio({ tenantId }: Props) {
     void getApprovedCards(tenantId).then(setPool);
   }, [reloadCards, reloadPlaylists, tenantId]);
 
-  // close any open context menu on a global click
   useEffect(() => {
     const close = () => {
       setMenu(null);
@@ -109,57 +128,105 @@ export default function CardStudio({ tenantId }: Props) {
     return () => window.removeEventListener("click", close);
   }, []);
 
-  function newCard() {
-    setSel(null);
-    setEditId(null);
-    setSubject("");
-    setTopic("");
-    setDifficulty(1);
-    setPrompt("");
-    setChoices(blankChoices());
-    setCorrect([]);
-    setExplanation("");
-    setVisibility("tenant");
+  const cur = active ? state[active] : null;
+  const dirty = (key: string) => base[key] !== JSON.stringify(state[key]);
+
+  function addTab(key: string, s: EState) {
+    setState((m) => ({ ...m, [key]: s }));
+    setBase((m) => ({ ...m, [key]: JSON.stringify(s) }));
+    setOrder((o) => (o.includes(key) ? o : [...o, key]));
+    setActive(key);
+    setViewId(null);
     setErr(null);
   }
 
-  function open(cardId: number) {
-    setSel(cardId);
-    setErr(null);
-    const c = mine.get(cardId);
-    if (c) {
-      setEditId(c.id);
-      setSubject(c.subject);
-      setTopic(c.topic);
-      setDifficulty(c.difficulty || 1);
-      setPrompt(c.prompt);
-      setChoices(c.choices.length ? c.choices.map((x) => ({ id: x.id, text: x.text })) : blankChoices());
-      setCorrect(c.correct);
-      setExplanation(c.explanation);
-      setVisibility(c.visibility);
-    } else {
-      setEditId(null); // not mine → preview only
+  function openCard(id: number) {
+    const c = mine.get(id);
+    if (!c) {
+      setViewId(id); // not mine → preview only
+      setActive(null);
+      return;
     }
+    const key = `card:${id}`;
+    if (order.includes(key)) {
+      setActive(key);
+      setViewId(null);
+      return;
+    }
+    addTab(key, fromDraft(c));
   }
 
-  const editable = sel === null || mine.has(sel);
+  function newCard() {
+    const key = `new:${newSeq}`;
+    setNewSeq((n) => n + 1);
+    addTab(key, blank());
+  }
+
+  function closeTab(key: string) {
+    setOrder((o) => {
+      const i = o.indexOf(key);
+      const next = o.filter((k) => k !== key);
+      if (active === key) setActive(next[i] ?? next[i - 1] ?? null);
+      return next;
+    });
+    setState((m) => {
+      const n = { ...m };
+      delete n[key];
+      return n;
+    });
+    setBase((m) => {
+      const n = { ...m };
+      delete n[key];
+      return n;
+    });
+  }
+
+  function patch(p: Partial<EState>) {
+    if (!active) return;
+    setState((m) => ({ ...m, [active]: { ...m[active], ...p } }));
+  }
 
   async function save(submit: boolean) {
-    const kept = choices.map((c) => ({ id: c.id, text: c.text.trim() })).filter((c) => c.text);
+    if (!active || !cur) return;
+    const kept = cur.choices.map((c) => ({ id: c.id, text: c.text.trim() })).filter((c) => c.text);
     const keep = new Set(kept.map((c) => c.id));
-    const cor = correct.filter((id) => keep.has(id));
-    if (!prompt.trim()) return setErr("Add a prompt.");
+    const cor = cur.correct.filter((id) => keep.has(id));
+    if (!cur.prompt.trim()) return setErr("Add a prompt.");
     if (kept.length < 2) return setErr("Add at least two choices.");
     if (cor.length < 1) return setErr("Mark a correct choice.");
-    const input: DraftInput = { subject, topic, difficulty, prompt, choices: kept, correct: cor, explanation, visibility };
+    const input: DraftInput = {
+      subject: cur.subject,
+      topic: cur.topic,
+      difficulty: cur.difficulty,
+      prompt: cur.prompt,
+      choices: kept,
+      correct: cor,
+      explanation: cur.explanation,
+      visibility: cur.visibility,
+    };
     setSaving(true);
-    const saved = editId ? await updateDraft(editId, input) : await createDraft(tenantId, input);
+    const saved = cur.editId ? await updateDraft(cur.editId, input) : await createDraft(tenantId, input);
     setSaving(false);
     if (!saved) return setErr("Could not save.");
     setErr(submit ? null : "Saved as draft.");
     await reloadCards();
-    setEditId(saved.id);
-    setSel(saved.id);
+    // bind the tab to the saved id and mark it clean
+    const newState: EState = { ...cur, editId: saved.id };
+    const newKey = `card:${saved.id}`;
+    setState((m) => {
+      const n = { ...m };
+      delete n[active];
+      n[newKey] = newState;
+      return n;
+    });
+    setBase((m) => {
+      const n = { ...m };
+      delete n[active];
+      n[newKey] = JSON.stringify(newState);
+      return n;
+    });
+    setOrder((o) => o.map((k) => (k === active ? newKey : k)));
+    setActive(newKey);
   }
 
   async function addTo(plId: number, cardId: number) {
@@ -171,20 +238,18 @@ export default function CardStudio({ tenantId }: Props) {
     await reloadPlaylists();
   }
 
-  // live preview source: the editor when editing, else the stored card
   const preview: ViewCard | null = useMemo(() => {
-    if (editable && (sel !== null || prompt))
+    if (cur)
       return {
-        prompt,
-        subject,
-        topic,
-        difficulty,
-        choices: choices.filter((c) => c.text.trim()),
-        correct,
-        explanation,
+        prompt: cur.prompt,
+        subject: cur.subject,
+        difficulty: cur.difficulty,
+        choices: cur.choices.filter((c) => c.text.trim()),
+        correct: cur.correct,
+        explanation: cur.explanation,
       };
-    return sel !== null ? viewById.get(sel) ?? null : null;
-  }, [editable, sel, prompt, subject, topic, difficulty, choices, correct, explanation, viewById]);
+    return viewId != null ? viewById.get(viewId) ?? null : null;
+  }, [cur, viewId, viewById]);
 
   function rowMenu(e: React.MouseEvent, cardId: number, plId?: number) {
     e.preventDefault();
@@ -192,6 +257,8 @@ export default function CardStudio({ tenantId }: Props) {
     setAddPick(false);
     setMenu({ x: e.clientX, y: e.clientY, cardId, plId });
   }
+
+  const tabTitle = (key: string) => state[key]?.prompt?.slice(0, 22) || "(untitled)";
 
   return (
     <div className="studio" onContextMenu={(e) => e.preventDefault()}>
@@ -207,8 +274,8 @@ export default function CardStudio({ tenantId }: Props) {
           cards.map((c) => (
             <div
               key={c.id}
-              className={`st-file ${sel === c.id ? "on" : ""}`}
-              onClick={() => open(c.id)}
+              className={`st-file ${active === `card:${c.id}` || viewId === c.id ? "on" : ""}`}
+              onClick={() => openCard(c.id)}
               onContextMenu={(e) => rowMenu(e, c.id)}
               title={c.prompt}
             >
@@ -238,8 +305,8 @@ export default function CardStudio({ tenantId }: Props) {
                 (items[p.id] ?? []).map((it) => (
                   <div
                     key={it.id}
-                    className={`st-file nested ${sel === it.id ? "on" : ""}`}
-                    onClick={() => open(it.id)}
+                    className={`st-file nested ${active === `card:${it.id}` || viewId === it.id ? "on" : ""}`}
+                    onClick={() => openCard(it.id)}
                     onContextMenu={(e) => rowMenu(e, it.id, p.id)}
                     title={it.prompt}
                   >
@@ -251,72 +318,73 @@ export default function CardStudio({ tenantId }: Props) {
         })}
       </aside>
 
-      {/* EDITOR */}
+      {/* EDITOR with tab strip */}
       <section className="st-editor">
-        {!editable ? (
-          <p className="st-note">Read-only — this card isn't one of yours. Use ▸ to preview it.</p>
+        {order.length > 0 && (
+          <div className="st-tabs">
+            {order.map((key) => (
+              <div key={key} className={`st-tab ${active === key ? "on" : ""}`} onClick={() => { setActive(key); setViewId(null); }}>
+                <span className="st-tab-dot">{dirty(key) ? "•" : ""}</span>
+                {tabTitle(key)}
+                <button className="st-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(key); }}>
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!cur ? (
+          <p className="st-note">
+            {viewId != null ? "Read-only — not one of your cards." : "Pick a card, or start a new one."}
+          </p>
         ) : (
-          <>
-            <textarea
-              className="st-prompt"
-              rows={2}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Question prompt…"
-            />
+          <div className="st-form">
+            <textarea className="st-prompt" rows={2} value={cur.prompt} onChange={(e) => patch({ prompt: e.target.value })} placeholder="Question prompt…" />
             <div className="st-row">
-              <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
-              <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Topic" />
-              <select value={difficulty} onChange={(e) => setDifficulty(Number(e.target.value))}>
+              <input value={cur.subject} onChange={(e) => patch({ subject: e.target.value })} placeholder="Subject" />
+              <input value={cur.topic} onChange={(e) => patch({ topic: e.target.value })} placeholder="Topic" />
+              <select value={cur.difficulty} onChange={(e) => patch({ difficulty: Number(e.target.value) })}>
                 <option value={1}>1·leicht</option>
                 <option value={2}>2·mittel</option>
                 <option value={3}>3·schwer</option>
               </select>
             </div>
             <div className="st-choices">
-              {choices.map((c, i) => (
+              {cur.choices.map((c, i) => (
                 <div className="st-choice" key={c.id}>
                   <input
                     type="checkbox"
-                    checked={correct.includes(c.id)}
+                    checked={cur.correct.includes(c.id)}
                     onChange={() =>
-                      setCorrect((p) => (p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id]))
+                      patch({ correct: cur.correct.includes(c.id) ? cur.correct.filter((x) => x !== c.id) : [...cur.correct, c.id] })
                     }
                   />
                   <input
                     value={c.text}
-                    onChange={(e) =>
-                      setChoices((p) => p.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)))
-                    }
+                    onChange={(e) => patch({ choices: cur.choices.map((x) => (x.id === c.id ? { ...x, text: e.target.value } : x)) })}
                     placeholder={`Choice ${i + 1}`}
                   />
                   <button
-                    onClick={() => {
-                      setChoices((p) => (p.length <= 2 ? p : p.filter((x) => x.id !== c.id)));
-                      setCorrect((p) => p.filter((x) => x !== c.id));
-                    }}
-                    disabled={choices.length <= 2}
+                    onClick={() =>
+                      patch({
+                        choices: cur.choices.length <= 2 ? cur.choices : cur.choices.filter((x) => x.id !== c.id),
+                        correct: cur.correct.filter((x) => x !== c.id),
+                      })
+                    }
+                    disabled={cur.choices.length <= 2}
                   >
                     ×
                   </button>
                 </div>
               ))}
-              <button
-                className="st-link"
-                onClick={() => setChoices((p) => [...p, { id: `c${Date.now()}`, text: "" }])}
-              >
+              <button className="st-link" onClick={() => patch({ choices: [...cur.choices, { id: `c${Date.now()}`, text: "" }] })}>
                 + choice
               </button>
             </div>
-            <textarea
-              className="st-expl"
-              rows={2}
-              value={explanation}
-              onChange={(e) => setExplanation(e.target.value)}
-              placeholder="Explanation (shown after answering)"
-            />
+            <textarea className="st-expl" rows={2} value={cur.explanation} onChange={(e) => patch({ explanation: e.target.value })} placeholder="Explanation (shown after answering)" />
             <div className="st-save">
-              <select value={visibility} onChange={(e) => setVisibility(e.target.value as "tenant" | "public")}>
+              <select value={cur.visibility} onChange={(e) => patch({ visibility: e.target.value as "tenant" | "public" })}>
                 <option value="tenant">My school</option>
                 <option value="public">Public</option>
               </select>
@@ -326,10 +394,10 @@ export default function CardStudio({ tenantId }: Props) {
                 Save draft
               </button>
               <button className="st-primary" onClick={() => save(true)} disabled={saving}>
-                {editId ? "Save & submit" : "Submit"}
+                {cur.editId ? "Save & submit" : "Submit"}
               </button>
             </div>
-          </>
+          </div>
         )}
       </section>
 
@@ -360,11 +428,9 @@ export default function CardStudio({ tenantId }: Props) {
       {/* CONTEXT MENU */}
       {menu && (
         <div className="st-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => { open(menu.cardId); setMenu(null); }}>Open</button>
+          <button onClick={() => { openCard(menu.cardId); setMenu(null); }}>Open</button>
           {menu.plId != null && (
-            <button onClick={() => { void removeFrom(menu.plId!, menu.cardId); setMenu(null); }}>
-              Remove from playlist
-            </button>
+            <button onClick={() => { void removeFrom(menu.plId!, menu.cardId); setMenu(null); }}>Remove from playlist</button>
           )}
           <div className="st-sub">
             <button onClick={() => setAddPick((v) => !v)}>Add to playlist ▸</button>
