@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ClassTopic, Identity, Playlist, Segment, StudentEffort } from "../types";
-import { getClassTopics, getPlaylistVerdicts, getPlaylists, getStudentEffort } from "../api";
+import {
+  getClassTopics,
+  getClasses,
+  getPlaylistVerdicts,
+  getPlaylists,
+  getStudentClasses,
+  getStudentEffort,
+} from "../api";
 import { buildInsights, cohortMedianAnswered, segmentOf } from "../conclusions";
 import PlaylistInsights from "./PlaylistInsights";
 import StudentDetail from "./StudentDetail";
@@ -42,6 +49,10 @@ export default function TeachDashboard({ identity, onClose }: Props) {
   const [openInsights, setOpenInsights] = useState<{ id: number; title: string } | null>(null);
   const [selected, setSelected] = useState<StudentEffort | null>(null);
   const [segFilter, setSegFilter] = useState<SegFilter>("all");
+  const [classes, setClasses] = useState<{ id: number; name: string }[]>([]);
+  const [studentClasses, setStudentClasses] = useState<Record<string, { classId: number; className: string }>>({});
+  const [classFilter, setClassFilter] = useState<number | "all">("all");
+  const [search, setSearch] = useState("");
 
   const tenantId = identity.tenantId;
   useEffect(() => {
@@ -49,6 +60,8 @@ export default function TeachDashboard({ identity, onClose }: Props) {
     getStudentEffort(tenantId).then(setStudents);
     getClassTopics().then(setTopics);
     getPlaylists().then(setPlaylists);
+    getClasses(tenantId).then(setClasses);
+    getStudentClasses().then(setStudentClasses);
     getPlaylistVerdicts().then((v) =>
       setVerdicts(new Map(v.map((x) => [x.playlistId, { cards: x.cards, verdict: x.verdict }])))
     );
@@ -70,11 +83,15 @@ export default function TeachDashboard({ identity, onClose }: Props) {
   const weakest = [...signalTopics].sort((a, b) => (a.accuracy ?? 0) - (b.accuracy ?? 0)).slice(0, 4);
   const strongest = [...signalTopics].sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0)).slice(0, 4);
 
+  const q = search.trim().toLowerCase();
   const shownStudents = pupils
     .filter((s) => {
       const seg = segmentOf(s, medAns);
-      if (segFilter === "at-risk") return seg === "at-risk" || seg === "inactive";
-      if (segFilter === "ahead") return seg === "ahead";
+      if (segFilter === "at-risk" && !(seg === "at-risk" || seg === "inactive")) return false;
+      if (segFilter === "ahead" && seg !== "ahead") return false;
+      // Class filter is ignored while searching, so search spans all classes.
+      if (!q && classFilter !== "all" && studentClasses[s.userId]?.classId !== classFilter) return false;
+      if (q && !(s.displayName ?? "").toLowerCase().includes(q)) return false;
       return true;
     })
     .sort((a, b) => (a.accuracy ?? 999) - (b.accuracy ?? 999));
@@ -186,6 +203,33 @@ export default function TeachDashboard({ identity, onClose }: Props) {
 
         {tab === "students" && (
           <section className="dash-sec">
+            <input
+              className="student-search"
+              type="search"
+              placeholder="Search students (all classes)…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search students"
+            />
+            {classes.length > 0 && (
+              <div className="seg-filter">
+                <button
+                  className={`seg-chip ${classFilter === "all" ? "on" : ""}`}
+                  onClick={() => setClassFilter("all")}
+                >
+                  All classes
+                </button>
+                {classes.map((c) => (
+                  <button
+                    key={c.id}
+                    className={`seg-chip ${classFilter === c.id ? "on" : ""}`}
+                    onClick={() => setClassFilter(c.id)}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="seg-filter">
               {(["all", "at-risk", "ahead"] as SegFilter[]).map((f) => (
                 <button key={f} className={`seg-chip ${segFilter === f ? "on" : ""}`} onClick={() => setSegFilter(f)}>
@@ -208,7 +252,9 @@ export default function TeachDashboard({ identity, onClose }: Props) {
                   onClick={() => setSelected(s)}
                 >
                   <span className="roster-name">
-                    {s.displayName ?? "Student"} <span className={`seg ${seg.cls}`}>{seg.label}</span>
+                    {s.displayName ?? "Student"}
+                    {studentClasses[s.userId] && <span className="class-tag">{studentClasses[s.userId].className}</span>}
+                    <span className={`seg ${seg.cls}`}>{seg.label}</span>
                   </span>
                   <span>{s.answered}</span>
                   <span>{s.accuracy ?? "—"}%</span>

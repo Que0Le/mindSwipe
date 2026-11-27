@@ -375,6 +375,37 @@ export async function getStudentEffort(tenantId: number): Promise<StudentEffort[
   }));
 }
 
+/** The tenant's classes (learning_group kind='class'). */
+export async function getClasses(tenantId: number): Promise<{ id: number; name: string }[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("learning_group")
+    .select("id,name")
+    .eq("tenant_id", tenantId)
+    .eq("kind", "class")
+    .order("name");
+  if (error) return [];
+  return (data ?? []) as { id: number; name: string }[];
+}
+
+/** Map each student to their class (for the dashboard's class filter). */
+export async function getStudentClasses(): Promise<Record<string, { classId: number; className: string }>> {
+  await ensureAuth();
+  const { data } = await supabase
+    .from("group_member")
+    .select("user_id, role, learning_group(id,name,kind)")
+    .eq("role", "student");
+  const map: Record<string, { classId: number; className: string }> = {};
+  for (const r of (data ?? []) as unknown as {
+    user_id: string;
+    learning_group: { id: number; name: string; kind: string } | null;
+  }[]) {
+    const g = r.learning_group;
+    if (g && g.kind === "class") map[r.user_id] = { classId: g.id, className: g.name };
+  }
+  return map;
+}
+
 /** One student's per-topic accuracy (RLS: staff may read their students'). */
 export async function getStudentTopics(userId: string): Promise<StudentTopic[]> {
   await ensureAuth();

@@ -1543,10 +1543,31 @@ body {
   white-space: nowrap;
 }
 
+.student-search {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 14px;
+  color: var(--text);
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.class-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+  margin-left: 6px;
+}
 .seg-filter {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 .seg-chip {
   padding: 6px 14px;
