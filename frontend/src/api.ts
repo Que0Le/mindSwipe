@@ -2,7 +2,9 @@ import type {
   Assignment,
   CardInsight,
   ClassMember,
+  ClassTopic,
   Comment,
+  StudentEffort,
   FeedPage,
   FeedSource,
   ModerationStatus,
@@ -342,6 +344,75 @@ export async function getClassRoster(tenantId: number): Promise<ClassMember[]> {
     answered: r.answered,
     correct: r.correct,
   }));
+}
+
+/** Per-student effort × outcome for the teacher dashboard (RLS: staff only). */
+export async function getStudentEffort(tenantId: number): Promise<StudentEffort[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("student_effort")
+    .select("user_id,display_name,role,answered,accuracy,median_ms,last_at")
+    .eq("tenant_id", tenantId)
+    .order("display_name");
+  if (error) return [];
+  return ((data ?? []) as {
+    user_id: string;
+    display_name: string | null;
+    role: Role;
+    answered: number;
+    accuracy: number | null;
+    median_ms: number | null;
+    last_at: string | null;
+  }[]).map((r) => ({
+    userId: r.user_id,
+    displayName: r.display_name,
+    role: r.role,
+    answered: r.answered,
+    accuracy: r.accuracy,
+    medianMs: r.median_ms,
+    lastAt: r.last_at,
+  }));
+}
+
+/** A too-easy / too-hard verdict per playlist, from its cards' correct-rates. */
+export async function getPlaylistVerdicts(): Promise<
+  { playlistId: number; cards: number; verdict: "easy" | "hard" | "balanced" | "nodata" }[]
+> {
+  await ensureAuth();
+  const { data } = await supabase.from("playlist_difficulty").select("playlist_id,correct_rate");
+  const byList = new Map<number, number[]>();
+  for (const r of (data ?? []) as { playlist_id: number; correct_rate: number | null }[]) {
+    if (r.correct_rate == null) continue;
+    const arr = byList.get(r.playlist_id) ?? [];
+    arr.push(r.correct_rate);
+    byList.set(r.playlist_id, arr);
+  }
+  const out: { playlistId: number; cards: number; verdict: "easy" | "hard" | "balanced" | "nodata" }[] = [];
+  for (const [playlistId, rates] of byList) {
+    const easy = rates.filter((r) => r >= 85).length;
+    const hard = rates.filter((r) => r <= 40).length;
+    const verdict =
+      rates.length === 0
+        ? "nodata"
+        : hard > easy && hard >= rates.length / 3
+          ? "hard"
+          : easy > hard && easy >= rates.length / 3
+            ? "easy"
+            : "balanced";
+    out.push({ playlistId, cards: rates.length, verdict });
+  }
+  return out;
+}
+
+/** Class accuracy per subject/topic (RLS scopes to the caller's students). */
+export async function getClassTopics(): Promise<ClassTopic[]> {
+  await ensureAuth();
+  const { data, error } = await supabase
+    .from("class_topic_mastery")
+    .select("subject,topic,attempts,students,accuracy")
+    .order("accuracy", { ascending: true });
+  if (error) return [];
+  return (data ?? []) as ClassTopic[];
 }
 
 // --- comments (teacher-moderated) ------------------------------------------

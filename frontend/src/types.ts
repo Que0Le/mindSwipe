@@ -123,6 +123,31 @@ export interface ClassMember {
   correct: number;
 }
 
+export interface StudentEffort {
+  userId: string;
+  displayName: string | null;
+  role: Role;
+  answered: number;
+  accuracy: number | null;
+  medianMs: number | null;
+  lastAt: string | null;
+}
+
+export interface ClassTopic {
+  subject: string | null;
+  topic: string | null;
+  attempts: number;
+  students: number;
+  accuracy: number | null;
+}
+
+export type Segment = "inactive" | "at-risk" | "on-track" | "ahead";
+
+export interface Insight {
+  kind: "warn" | "info" | "good";
+  text: string;
+}
+
 // A swipe session always runs over one of these sources.
 export type FeedSource =
   | { type: "all" }

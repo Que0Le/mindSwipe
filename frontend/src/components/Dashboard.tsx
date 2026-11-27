@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Assignment, ClassMember, FeedSource, Identity, Playlist, Stats, TopicMastery } from "../types";
+import type { Assignment, FeedSource, Identity, Playlist, Stats, TopicMastery } from "../types";
 import {
   addTopicInterest,
   getAssignments,
-  getClassRoster,
   getPlaylists,
   getStats,
   getTopicInterests,
@@ -19,6 +18,7 @@ interface Props {
   identity: Identity;
   onStartSession: (source: FeedSource) => void;
   onSwitchPersona: (p: Persona) => void;
+  onOpenTeach: () => void;
 }
 
 function dueLabel(dueAt: string | null): string {
@@ -30,7 +30,7 @@ function dueLabel(dueAt: string | null): string {
   return `due in ${days} days`;
 }
 
-export default function Dashboard({ identity, onStartSession, onSwitchPersona }: Props) {
+export default function Dashboard({ identity, onStartSession, onSwitchPersona, onOpenTeach }: Props) {
   const isMember = identity.tenantId != null;
 
   const [stats, setStats] = useState<Stats>({ answered: 0, correct: 0, likes: 0, viewed: 0 });
@@ -41,20 +41,12 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ topic: string; count: number }[]>([]);
-  // A flag-gated teaching tool opened from the dashboard.
-  const [tool, setTool] = useState<"authoring" | "monitoring" | null>(null);
-  const [roster, setRoster] = useState<ClassMember[]>([]);
+  // The authoring tool stub (monitoring now opens the full /teach page).
+  const [tool, setTool] = useState<"authoring" | null>(null);
   const [insights, setInsights] = useState<{ id: number; title: string } | null>(null);
 
   const flags = identity.flags;
   const isStaff = identity.role === "teacher" || identity.role === "tenant_admin";
-
-  // Load the class roster when the teacher opens the monitoring dashboard.
-  useEffect(() => {
-    if (tool === "monitoring" && identity.tenantId != null) {
-      getClassRoster(identity.tenantId).then(setRoster);
-    }
-  }, [tool, identity.tenantId]);
 
   const masteryMap = useMemo(() => {
     const m = new Map<string, TopicMastery>();
@@ -156,7 +148,7 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
             <h2 className="sec-title">Teaching tools</h2>
             <div className="tools">
               {flags.monitoring_dashboard && (
-                <button className="tool-card" onClick={() => setTool("monitoring")}>
+                <button className="tool-card" onClick={onOpenTeach}>
                   <span className="tool-ico">📊</span>
                   <span>Class dashboard</span>
                 </button>
@@ -292,46 +284,11 @@ export default function Dashboard({ identity, onStartSession, onSwitchPersona }:
             <button className="back" onClick={() => setTool(null)} aria-label="Close">
               ← Close
             </button>
-            {tool === "monitoring" ? (
-              <>
-                <h2>Class dashboard</h2>
-                <p className="tool-note">
-                  {identity.displayName}’s class · {identity.plan} plan
-                </p>
-                <div className="roster">
-                  <div className="roster-head">
-                    <span>Student</span>
-                    <span>Answered</span>
-                    <span>Correct</span>
-                  </div>
-                  {roster
-                    .filter((m) => m.role === "student")
-                    .map((m) => {
-                      const acc = m.answered ? Math.round((m.correct / m.answered) * 100) : 0;
-                      return (
-                        <div className="roster-row" key={m.userId}>
-                          <span className="roster-name">{m.displayName ?? "Student"}</span>
-                          <span>{m.answered}</span>
-                          <span>
-                            {m.correct} <small>({acc}%)</small>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  {roster.filter((m) => m.role === "student").length === 0 && (
-                    <p className="tool-note">No students in this class yet.</p>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <h2>Author a card</h2>
-                <p className="tool-note">
-                  Authoring is enabled for your school ({identity.plan} plan). The card editor —
-                  draft → review → publish — will appear here.
-                </p>
-              </>
-            )}
+            <h2>Author a card</h2>
+            <p className="tool-note">
+              Authoring is enabled for your school ({identity.plan} plan). The card editor —
+              draft → review → publish — will appear here.
+            </p>
           </div>
         </div>
       )}

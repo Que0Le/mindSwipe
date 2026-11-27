@@ -20,10 +20,11 @@ import {
   type BoolMap,
 } from "./localState";
 import Dashboard from "./components/Dashboard";
+import TeachDashboard from "./components/TeachDashboard";
 import Feed from "./components/Feed";
 import Detail from "./components/Detail";
 
-type View = "dashboard" | "swipe";
+type View = "dashboard" | "swipe" | "teach";
 
 function sourceTitle(s: FeedSource): string {
   switch (s.type) {
@@ -122,6 +123,10 @@ export default function App() {
         inDetailRef.current = false;
         setOpenPost(null);
         setView("swipe");
+      } else if (st?.ms === "teach") {
+        inDetailRef.current = false;
+        setOpenPost(null);
+        setView("teach");
       } else {
         inDetailRef.current = false;
         setOpenPost(null);
@@ -139,6 +144,11 @@ export default function App() {
     viewed.current = new Set();
     inDetailRef.current = false;
     window.history.pushState({ ms: "swipe" }, "", window.location.pathname);
+  }, []);
+
+  const openTeach = useCallback(() => {
+    setView("teach");
+    window.history.pushState({ ms: "teach" }, "", window.location.pathname);
   }, []);
 
   const exitToDashboard = useCallback(() => {
@@ -239,10 +249,23 @@ export default function App() {
     );
   }
 
+  if (view === "teach") {
+    return (
+      <div className="app">
+        <TeachDashboard identity={identity} onClose={exitToDashboard} />
+      </div>
+    );
+  }
+
   if (view === "dashboard") {
     return (
       <div className="app">
-        <Dashboard identity={identity} onStartSession={startSession} onSwitchPersona={switchPersona} />
+        <Dashboard
+          identity={identity}
+          onStartSession={startSession}
+          onSwitchPersona={switchPersona}
+          onOpenTeach={openTeach}
+        />
       </div>
     );
   }
